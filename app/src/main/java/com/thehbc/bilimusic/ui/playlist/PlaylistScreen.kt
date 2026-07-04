@@ -1,0 +1,291 @@
+package com.thehbc.bilimusic.ui.playlist
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.thehbc.bilimusic.data.model.Playlist
+import com.thehbc.bilimusic.data.model.Song
+import com.thehbc.bilimusic.ui.player.PlayerState
+import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistScreen(
+    playlist: Playlist,
+    viewModel: PlaylistViewModel,
+    playerState: PlayerState,
+    onBack: () -> Unit,
+    onSongClick: (Song) -> Unit,
+    onPlayAll: (List<Song>) -> Unit,
+) {
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+        state = rememberTopAppBarState()
+    )
+    
+    val songs by viewModel.songs.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
+
+    LaunchedEffect(playlist.id) {
+        viewModel.loadPlaylist(playlist.id)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = playlist.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = WindowInsets(0),
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            // 封面 Header
+            item {
+                PlaylistHeader(
+                    playlist = playlist,
+                    onPlayAll = { onPlayAll(songs) },
+                )
+            }
+            
+            if (isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else if (error != null) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(error ?: "", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            } else {
+                // 歌曲列表
+                items(songs, key = { it.id }) { song ->
+                    SongListItem(
+                        song = song,
+                        isCurrentlyPlaying = playerState.currentSong?.id == song.id,
+                        isPlaying = playerState.currentSong?.id == song.id && playerState.isPlaying,
+                        onClick = { onSongClick(song) },
+                    )
+                }
+            }
+            // 底部留白
+            item { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistHeader(
+    playlist: Playlist,
+    onPlayAll: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // 封面横幅
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2.2f)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            playlist.coverColor,
+                            playlist.coverColor.copy(alpha = 0.55f),
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            // 封面图标卡片
+            Surface(
+                modifier = Modifier.size(96.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White.copy(alpha = 0.18f),
+                tonalElevation = 0.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.LibraryMusic,
+                        contentDescription = null,
+                        modifier = Modifier.size(52.dp),
+                        tint = Color.White,
+                    )
+                }
+            }
+        }
+
+        // 信息区
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            Text(
+                text = playlist.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "${playlist.songCount} 首歌曲 · 用户创建",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+            // 操作按钮行
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onPlayAll,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("播放全部")
+                }
+                OutlinedButton(
+                    onClick = {},
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(Icons.Default.Shuffle, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("随机播放")
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+fun SongListItem(
+    song: Song,
+    isCurrentlyPlaying: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+) {
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariantColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    ListItem(
+        headlineContent = {
+            Text(
+                text = song.title,
+                fontWeight = if (isCurrentlyPlaying) FontWeight.Bold else FontWeight.Medium,
+                color = if (isCurrentlyPlaying) primaryColor else onSurfaceColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        supportingContent = {
+            Text(
+                text = song.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = onSurfaceVariantColor,
+                maxLines = 1,
+            )
+        },
+        leadingContent = {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (isCurrentlyPlaying)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.VolumeUp
+                                  else if (isCurrentlyPlaying) Icons.Default.Pause
+                                  else Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = if (isCurrentlyPlaying) primaryColor else onSurfaceVariantColor,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        },
+        trailingContent = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = song.duration,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = onSurfaceVariantColor,
+                )
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = "更多",
+                    modifier = Modifier.size(18.dp),
+                    tint = onSurfaceVariantColor,
+                )
+            }
+        },
+        modifier = Modifier.clickable { onClick() },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+    )
+}
