@@ -5,7 +5,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.thehbc.bilimusic.data.model.Song
 import com.thehbc.bilimusic.data.network.api.BiliApiService
+import com.thehbc.bilimusic.data.network.model.FavMedia
 import com.thehbc.bilimusic.data.repository.LocalPlaylistRepository
+import com.thehbc.bilimusic.data.utils.BiliTitleParser
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,21 +67,46 @@ class PlaylistViewModel(
                         pageSize = 20
                     )
                     if (response.code == 0) {
-                        _songs.value = response.data?.medias?.map { media ->
-                            val durationSeconds = media.duration ?: 0
-                            val minutes = durationSeconds / 60
-                            val seconds = durationSeconds % 60
-                            Song(
-                                id          = media.id.toString(),
-                                bvid        = media.bvid,
-                                cid         = media.ugc?.first_cid,
-                                title       = media.title ?: "未知歌曲",
-                                artist      = media.upper?.name ?: "未知歌手",
-                                duration    = String.format("%02d:%02d", minutes, seconds),
-                                albumArtUrl = media.cover,
-                                mediaUri    = null
-                            )
-                        } ?: emptyList()
+                        val medias = response.data?.medias ?: emptyList()
+                        val flattenedSongs = coroutineScope {
+                            medias.map { media ->
+                                async {
+                                    if (media.bvid != null && media.page != null && media.page > 1) {
+                                        try {
+                                            val detailResponse = apiService.getVideoDetail(media.bvid)
+                                            if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
+                                                val cleanVideoTitle = media.title ?: ""
+                                                val uploader = media.upper?.name ?: "未知歌手"
+                                                detailResponse.data.pages.map { page ->
+                                                    val durationSeconds = page.duration
+                                                    val minutes = durationSeconds / 60
+                                                    val seconds = durationSeconds % 60
+                                                    val cleanPageTitle = BiliTitleParser.cleanPageTitle(page.part ?: "未知歌曲")
+                                                    Song(
+                                                        id          = "${media.id}_${page.cid}",
+                                                        bvid        = media.bvid,
+                                                        cid         = page.cid,
+                                                        title       = cleanPageTitle,
+                                                        artist      = uploader,
+                                                        duration    = String.format("%02d:%02d", minutes, seconds),
+                                                        albumArtUrl = media.cover,
+                                                        mediaUri    = null,
+                                                        parentTitle = cleanVideoTitle
+                                                    )
+                                                }
+                                            } else {
+                                                listOf(mapToSingleSong(media))
+                                            }
+                                        } catch (e: Exception) {
+                                            listOf(mapToSingleSong(media))
+                                        }
+                                    } else {
+                                        listOf(mapToSingleSong(media))
+                                    }
+                                }
+                            }.awaitAll().flatten()
+                        }
+                        _songs.value = flattenedSongs
                     } else {
                         _error.value = response.message
                     }
@@ -87,6 +117,23 @@ class PlaylistViewModel(
                 _isLoading.value = false
             }
         }
+    }
+
+    private fun mapToSingleSong(media: FavMedia): Song {
+        val durationSeconds = media.duration ?: 0
+        val minutes = durationSeconds / 60
+        val seconds = durationSeconds % 60
+        return Song(
+            id          = media.id.toString(),
+            bvid        = media.bvid,
+            cid         = media.ugc?.first_cid,
+            title       = media.title ?: "未知歌曲",
+            artist      = media.upper?.name ?: "未知歌手",
+            duration    = String.format("%02d:%02d", minutes, seconds),
+            albumArtUrl = media.cover,
+            mediaUri    = null,
+            parentTitle = null
+        )
     }
 
     companion object {

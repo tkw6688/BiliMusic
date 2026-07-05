@@ -248,9 +248,16 @@ class PlayerViewModel(
                         }
 
                         if (!audioUrl.isNullOrEmpty()) {
+                            val artistWithParent = buildString {
+                                append(song.artist)
+                                if (!song.parentTitle.isNullOrEmpty()) {
+                                    append(" · ")
+                                    append(song.parentTitle)
+                                }
+                            }
                             val metadata = MediaMetadata.Builder()
                                 .setTitle(song.title)
-                                .setArtist(song.artist)
+                                .setArtist(artistWithParent)
                                 .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
                                 .build()
 

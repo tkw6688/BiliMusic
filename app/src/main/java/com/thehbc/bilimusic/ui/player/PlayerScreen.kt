@@ -237,8 +237,15 @@ fun PlayerScreenContent(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(2.dp))
+                val subtitle = buildString {
+                    append(song?.artist ?: "未知歌手")
+                    if (!song?.parentTitle.isNullOrEmpty()) {
+                        append(" · ")
+                        append(song?.parentTitle)
+                    }
+                }
                 Text(
-                    text = song?.artist ?: "未知歌手",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

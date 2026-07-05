@@ -104,7 +104,8 @@ data class FavMedia(
     val cover: String?,
     val duration: Int?,
     val upper: FavUpper?,
-    val ugc: FavUgc?
+    val ugc: FavUgc?,
+    val page: Int? // 视频分P总数
 )
 
 data class FavUgc(

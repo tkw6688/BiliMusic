@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -39,7 +40,7 @@ class AuthViewModel(
         // App 启动时，如果已有 Cookie，主动去 B 站验证并更新用户基本信息和 Wbi 密钥
         viewModelScope.launch {
             // 等待 AuthManager 从 DataStore 加载完成
-            delay(500) 
+            authManager.isInitialized.first { it }
             
             // 每次启动都去获取/刷新官方签发的真实设备指纹 (避免使用之前版本随机生成的假指纹导致 412)
             fetchAndSaveBuvid()

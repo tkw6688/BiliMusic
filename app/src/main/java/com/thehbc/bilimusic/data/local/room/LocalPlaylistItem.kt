@@ -26,5 +26,6 @@ data class LocalPlaylistItem(
     val artist: String,
     val durationStr: String,
     val albumArtUrl: String?,
-    val sortOrder: Int
+    val sortOrder: Int,
+    val parentTitle: String? = null
 )

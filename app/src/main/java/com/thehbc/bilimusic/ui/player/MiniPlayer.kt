@@ -95,8 +95,15 @@ fun MiniPlayer(
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    val subtitle = buildString {
+                        append(song.artist)
+                        if (!song.parentTitle.isNullOrEmpty()) {
+                            append(" · ")
+                            append(song.parentTitle)
+                        }
+                    }
                     Text(
-                        text = song.artist,
+                        text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

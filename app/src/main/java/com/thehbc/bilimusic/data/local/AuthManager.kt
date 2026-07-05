@@ -7,9 +7,16 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "bili_settings")
@@ -40,7 +47,10 @@ class AuthManager(private val context: Context) {
     val uidFlow: Flow<Long?> = context.dataStore.data.map { it[BiliDataStore.UID] }
     val faceFlow: Flow<String?> = context.dataStore.data.map { it[BiliDataStore.FACE] }
     
-    // Cookie 拦截器可用的同步读取方法（如果在协程外部，可能需要特殊处理，但最好由拦截器持有最新状态）
+    private val _isInitialized = MutableStateFlow(false)
+    val isInitialized: StateFlow<Boolean> = _isInitialized.asStateFlow()
+    
+    // Cookie 拦截器可用的同步读取方法（已经在内存中自动更新，不会产生阻塞）
     var currentSessdata: String? = null
         private set
     var currentBiliJct: String? = null
@@ -53,14 +63,25 @@ class AuthManager(private val context: Context) {
     var currentBuvid4: String? = null
         private set
         
+    var currentImgKey: String? = null
+        private set
+    var currentSubKey: String? = null
+        private set
+        
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        
     init {
-        runBlocking {
-            val prefs = context.dataStore.data.first()
-            currentSessdata = prefs[BiliDataStore.SESSDATA]
-            currentBiliJct = prefs[BiliDataStore.BILI_JCT]
-            currentDedeUserId = prefs[BiliDataStore.DEDE_USER_ID]
-            currentBuvid3 = prefs[BiliDataStore.BUVID3]
-            currentBuvid4 = prefs[BiliDataStore.BUVID4]
+        scope.launch {
+            context.dataStore.data.collect { prefs ->
+                currentSessdata = prefs[BiliDataStore.SESSDATA]
+                currentBiliJct = prefs[BiliDataStore.BILI_JCT]
+                currentDedeUserId = prefs[BiliDataStore.DEDE_USER_ID]
+                currentBuvid3 = prefs[BiliDataStore.BUVID3]
+                currentBuvid4 = prefs[BiliDataStore.BUVID4]
+                currentImgKey = prefs[BiliDataStore.IMG_KEY]
+                currentSubKey = prefs[BiliDataStore.SUB_KEY]
+                _isInitialized.value = true
+            }
         }
     }
         
@@ -114,10 +135,7 @@ class AuthManager(private val context: Context) {
     }
     
     fun getWbiKeysSync(): Pair<String?, String?> {
-        return runBlocking {
-            val prefs = context.dataStore.data.first()
-            Pair(prefs[BiliDataStore.IMG_KEY], prefs[BiliDataStore.SUB_KEY])
-        }
+        return Pair(currentImgKey, currentSubKey)
     }
 
     suspend fun saveBuvids(buvid3: String, buvid4: String) {

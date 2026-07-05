@@ -12,4 +12,5 @@ data class Song(
     val mediaUri: String? = null,
     val bvid: String? = null,
     val cid: Long? = null,
+    val parentTitle: String? = null,
 )

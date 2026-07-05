@@ -237,11 +237,19 @@ fun SongListItem(
             )
         },
         supportingContent = {
+            val subtitle = buildString {
+                append(song.artist)
+                if (!song.parentTitle.isNullOrEmpty()) {
+                    append(" · ")
+                    append(song.parentTitle)
+                }
+            }
             Text(
-                text = song.artist,
+                text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = onSurfaceVariantColor,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         },
         leadingContent = {

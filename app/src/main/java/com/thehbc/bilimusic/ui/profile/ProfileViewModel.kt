@@ -43,6 +43,8 @@ class ProfileViewModel(private val authManager: AuthManager) : ViewModel() {
         }
     }
 
+
+
     companion object {
         fun provideFactory(authManager: AuthManager): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
