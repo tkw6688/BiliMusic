@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,6 +78,7 @@ fun QueueBottomSheet(
             val lazyListState = rememberLazyListState()
             val localQueue = remember { mutableStateListOf<Song>() }
             var dragOriginalIndex by remember { mutableIntStateOf(-1) }
+            var openSwipeSongId by remember { mutableStateOf<String?>(null) }
 
             val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
                 val targetIndex = normalizeMoveTargetIndex(
@@ -97,6 +99,18 @@ fun QueueBottomSheet(
             }
 
             val currentSongId = state.currentSong?.id
+
+            LaunchedEffect(currentSongId) {
+                if (openSwipeSongId == currentSongId) {
+                    openSwipeSongId = null
+                }
+            }
+
+            LaunchedEffect(lazyListState.isScrollInProgress) {
+                if (lazyListState.isScrollInProgress) {
+                    openSwipeSongId = null
+                }
+            }
 
             LazyColumn(
                 state = lazyListState,
@@ -122,6 +136,20 @@ fun QueueBottomSheet(
                             targetValue = if (isDragging) 8.dp else 0.dp,
                             label = "drag_elevation"
                         )
+                        val swipeEnabled = isQueueSwipeDeleteEnabled(
+                            isCurrentlyPlaying = isCurrentlyPlaying,
+                            isAnyItemDragging = reorderState.isAnyItemDragging
+                        )
+                        val canStartDrag = shouldAllowQueueDragStart(
+                            hasOpenSwipeItem = openSwipeSongId != null
+                        )
+                        val rowOnClick = {
+                            if (openSwipeSongId == song.id) {
+                                openSwipeSongId = null
+                            } else {
+                                onPlaySong(song)
+                            }
+                        }
 
                         if (isCurrentlyPlaying) {
                             QueueSongRow(
@@ -129,31 +157,50 @@ fun QueueBottomSheet(
                                 isCurrentlyPlaying = true,
                                 elevation = elevation,
                                 dragHandleModifier = null,
-                                onClick = { onPlaySong(song) }
+                                onClick = rowOnClick
                             )
                         } else {
-                            QueueSongRow(
-                                song = song,
-                                isCurrentlyPlaying = false,
-                                elevation = elevation,
-                                dragHandleModifier = Modifier.draggableHandle(
-                                    onDragStarted = {
-                                        dragOriginalIndex =
-                                            localQueue.indexOfFirst { it.id == song.id }
+                            QueueSwipeRevealRow(
+                                isOpen = openSwipeSongId == song.id,
+                                enabled = swipeEnabled,
+                                onOpenChange = { isOpen ->
+                                    openSwipeSongId = if (isOpen) song.id else openSwipeSongId.takeUnless { it == song.id }
+                                },
+                                onDelete = {
+                                    openSwipeSongId = null
+                                    val index = localQueue.indexOfFirst { it.id == song.id }
+                                    if (index != -1) localQueue.removeAt(index)
+                                    onRemoveSong(song.id)
+                                }
+                            ) {
+                                QueueSongRow(
+                                    song = song,
+                                    isCurrentlyPlaying = false,
+                                    elevation = elevation,
+                                    dragHandleModifier = if (canStartDrag) {
+                                        Modifier.draggableHandle(
+                                            onDragStarted = {
+                                                openSwipeSongId = null
+                                                dragOriginalIndex =
+                                                    localQueue.indexOfFirst { it.id == song.id }
+                                            },
+                                            onDragStopped = {
+                                                val finalIndex =
+                                                    localQueue.indexOfFirst { it.id == song.id }
+                                                if (dragOriginalIndex != -1 && finalIndex != -1 &&
+                                                    dragOriginalIndex != finalIndex
+                                                ) {
+                                                    onMoveSong(dragOriginalIndex, finalIndex)
+                                                }
+                                                dragOriginalIndex = -1
+                                            }
+                                        )
+                                    } else {
+                                        Modifier
                                     },
-                                    onDragStopped = {
-                                        val finalIndex =
-                                            localQueue.indexOfFirst { it.id == song.id }
-                                        if (dragOriginalIndex != -1 && finalIndex != -1 &&
-                                            dragOriginalIndex != finalIndex
-                                        ) {
-                                            onMoveSong(dragOriginalIndex, finalIndex)
-                                        }
-                                        dragOriginalIndex = -1
-                                    }
-                                ),
-                                onClick = { onPlaySong(song) }
-                            )
+                                    onClick = rowOnClick
+                                )
+                            }
                         }
                     }
                 }

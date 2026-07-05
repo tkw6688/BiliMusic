@@ -2,7 +2,12 @@ package com.thehbc.bilimusic.ui.player
 
 import com.thehbc.bilimusic.data.model.Song
 
-internal fun isQueueSwipeDeleteEnabled(): Boolean = false
+internal fun isQueueSwipeDeleteEnabled(
+    isCurrentlyPlaying: Boolean,
+    isAnyItemDragging: Boolean
+): Boolean = !isCurrentlyPlaying && !isAnyItemDragging
+
+internal fun shouldAllowQueueDragStart(hasOpenSwipeItem: Boolean): Boolean = !hasOpenSwipeItem
 
 internal fun shouldAnimateQueueItemPlacement(isDragging: Boolean): Boolean = !isDragging
 

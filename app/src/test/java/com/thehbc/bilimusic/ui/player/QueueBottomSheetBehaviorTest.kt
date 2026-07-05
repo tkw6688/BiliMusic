@@ -9,8 +9,43 @@ import org.junit.Test
 class QueueBottomSheetBehaviorTest {
 
     @Test
-    fun isQueueSwipeDeleteEnabled_returnsFalse_whileReorderStabilityIsPrioritized() {
-        assertFalse(isQueueSwipeDeleteEnabled())
+    fun isQueueSwipeDeleteEnabled_returnsTrue_forNormalIdleItem() {
+        assertTrue(
+            isQueueSwipeDeleteEnabled(
+                isCurrentlyPlaying = false,
+                isAnyItemDragging = false
+            )
+        )
+    }
+
+    @Test
+    fun isQueueSwipeDeleteEnabled_returnsFalse_forCurrentSong() {
+        assertFalse(
+            isQueueSwipeDeleteEnabled(
+                isCurrentlyPlaying = true,
+                isAnyItemDragging = false
+            )
+        )
+    }
+
+    @Test
+    fun isQueueSwipeDeleteEnabled_returnsFalse_whileDragging() {
+        assertFalse(
+            isQueueSwipeDeleteEnabled(
+                isCurrentlyPlaying = false,
+                isAnyItemDragging = true
+            )
+        )
+    }
+
+    @Test
+    fun shouldAllowQueueDragStart_returnsFalse_whenAnotherItemIsSwipedOpen() {
+        assertFalse(shouldAllowQueueDragStart(hasOpenSwipeItem = true))
+    }
+
+    @Test
+    fun shouldAllowQueueDragStart_returnsTrue_whenNoItemIsSwipedOpen() {
+        assertTrue(shouldAllowQueueDragStart(hasOpenSwipeItem = false))
     }
 
     @Test
