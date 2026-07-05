@@ -9,6 +9,21 @@ import org.junit.Test
 class QueueBottomSheetBehaviorTest {
 
     @Test
+    fun isQueueSwipeDeleteEnabled_returnsFalse_whileReorderStabilityIsPrioritized() {
+        assertFalse(isQueueSwipeDeleteEnabled())
+    }
+
+    @Test
+    fun shouldAnimateQueueItemPlacement_returnsFalse_whileDragging() {
+        assertFalse(shouldAnimateQueueItemPlacement(isDragging = true))
+    }
+
+    @Test
+    fun shouldAnimateQueueItemPlacement_returnsTrue_whenIdle() {
+        assertTrue(shouldAnimateQueueItemPlacement(isDragging = false))
+    }
+
+    @Test
     fun shouldSyncLocalQueue_returnsTrue_whenExternalQueueChangedAndNotDragging() {
         val externalQueue = listOf(song("1"), song("3"))
         val localQueue = listOf(song("1"), song("2"), song("3"))
@@ -36,10 +51,7 @@ class QueueBottomSheetBehaviorTest {
         )
     }
 
-    @Test
-    fun calculateQueueSwipeDeleteThreshold_requiresMostOfTheRowWidth() {
-        assertEquals(850f, calculateQueueSwipeDeleteThreshold(1000f), 0.001f)
-    }
+
 
     @Test
     fun normalizeMoveTargetIndex_clampsDropPositionToLastItem() {

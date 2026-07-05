@@ -18,23 +18,21 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,25 +76,20 @@ fun QueueBottomSheet(
 
             val lazyListState = rememberLazyListState()
             val localQueue = remember { mutableStateListOf<Song>() }
+            var dragOriginalIndex by remember { mutableIntStateOf(-1) }
 
             val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
                 val targetIndex = normalizeMoveTargetIndex(
                     itemCount = localQueue.size,
                     requestedToIndex = to.index
                 )
-                val reorderedQueue = reorderQueue(
-                    queue = localQueue,
-                    fromIndex = from.index,
-                    requestedToIndex = targetIndex
-                )
-                if (reorderedQueue != localQueue) {
-                    localQueue.clear()
-                    localQueue.addAll(reorderedQueue)
+                if (from.index != targetIndex && from.index in localQueue.indices) {
+                    val item = localQueue.removeAt(from.index)
+                    localQueue.add(targetIndex, item)
                 }
-                onMoveSong(from.index, targetIndex)
             }
 
-            LaunchedEffect(state.queue, reorderState.isAnyItemDragging) {
+            LaunchedEffect(state.queue) {
                 if (shouldSyncLocalQueue(state.queue, localQueue, reorderState.isAnyItemDragging)) {
                     localQueue.clear()
                     localQueue.addAll(state.queue)
@@ -119,7 +112,11 @@ fun QueueBottomSheet(
                     ReorderableItem(
                         state = reorderState,
                         key = song.id,
-                        modifier = Modifier.animateItem()
+                        modifier = if (shouldAnimateQueueItemPlacement(reorderState.isAnyItemDragging)) {
+                            Modifier.animateItem()
+                        } else {
+                            Modifier
+                        }
                     ) { isDragging ->
                         val elevation by animateDpAsState(
                             targetValue = if (isDragging) 8.dp else 0.dp,
@@ -135,48 +132,28 @@ fun QueueBottomSheet(
                                 onClick = { onPlaySong(song) }
                             )
                         } else {
-                            val songId = song.id
-                            SwipeToDismissBox(
-                                state = rememberSwipeToDismissBoxState(
-                                    positionalThreshold = ::calculateQueueSwipeDeleteThreshold,
-                                    confirmValueChange = { value ->
-                                        if (value == SwipeToDismissBoxValue.EndToStart) {
-                                            val index = localQueue.indexOfFirst { it.id == songId }
-                                            if (index != -1) {
-                                                localQueue.removeAt(index)
-                                            }
-                                            onRemoveSong(songId)
+                            QueueSongRow(
+                                song = song,
+                                isCurrentlyPlaying = false,
+                                elevation = elevation,
+                                dragHandleModifier = Modifier.draggableHandle(
+                                    onDragStarted = {
+                                        dragOriginalIndex =
+                                            localQueue.indexOfFirst { it.id == song.id }
+                                    },
+                                    onDragStopped = {
+                                        val finalIndex =
+                                            localQueue.indexOfFirst { it.id == song.id }
+                                        if (dragOriginalIndex != -1 && finalIndex != -1 &&
+                                            dragOriginalIndex != finalIndex
+                                        ) {
+                                            onMoveSong(dragOriginalIndex, finalIndex)
                                         }
-                                        false
+                                        dragOriginalIndex = -1
                                     }
                                 ),
-                                enableDismissFromStartToEnd = false,
-                                backgroundContent = {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(vertical = 4.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(MaterialTheme.colorScheme.errorContainer),
-                                        contentAlignment = Alignment.CenterEnd
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "删除",
-                                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                                            modifier = Modifier.padding(end = 16.dp)
-                                        )
-                                    }
-                                }
-                            ) {
-                                QueueSongRow(
-                                    song = song,
-                                    isCurrentlyPlaying = false,
-                                    elevation = elevation,
-                                    dragHandleModifier = Modifier.draggableHandle(),
-                                    onClick = { onPlaySong(song) }
-                                )
-                            }
+                                onClick = { onPlaySong(song) }
+                            )
                         }
                     }
                 }

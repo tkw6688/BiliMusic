@@ -2,7 +2,9 @@ package com.thehbc.bilimusic.ui.player
 
 import com.thehbc.bilimusic.data.model.Song
 
-internal const val QueueSwipeDeleteThresholdFraction = 0.85f
+internal fun isQueueSwipeDeleteEnabled(): Boolean = false
+
+internal fun shouldAnimateQueueItemPlacement(isDragging: Boolean): Boolean = !isDragging
 
 internal fun shouldSyncLocalQueue(
     externalQueue: List<Song>,
@@ -13,9 +15,7 @@ internal fun shouldSyncLocalQueue(
     return externalQueue.map(Song::id) != localQueue.map(Song::id)
 }
 
-internal fun calculateQueueSwipeDeleteThreshold(totalDistance: Float): Float {
-    return totalDistance * QueueSwipeDeleteThresholdFraction
-}
+
 
 internal fun normalizeMoveTargetIndex(itemCount: Int, requestedToIndex: Int): Int {
     if (itemCount <= 0) return 0
