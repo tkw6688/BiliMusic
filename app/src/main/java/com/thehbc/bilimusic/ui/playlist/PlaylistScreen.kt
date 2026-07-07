@@ -22,6 +22,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -42,6 +44,9 @@ fun PlaylistScreen(
     onBack: () -> Unit,
     onSongClick: (Song) -> Unit,
     onPlayAll: (List<Song>) -> Unit,
+    onInsertNext: (Song) -> Unit,
+    onAppendToQueue: (Song) -> Unit,
+    onAddClick: () -> Unit,
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
         state = rememberTopAppBarState()
@@ -52,6 +57,11 @@ fun PlaylistScreen(
     val error by viewModel.error.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     
+    val context = LocalContext.current
+    var activeSongMenu by remember { mutableStateOf<Song?>(null) }
+    var showPlaylistSelectDialogForSong by remember { mutableStateOf<Song?>(null) }
+    val localPlaylists by viewModel.localPlaylists.collectAsState()
+
     var isFullLoading by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
@@ -93,6 +103,11 @@ fun PlaylistScreen(
                     }
                 },
                 actions = {
+                    if (playlist.id.startsWith("local_")) {
+                        IconButton(onClick = onAddClick) {
+                            Icon(Icons.Default.Add, contentDescription = "添加歌曲")
+                        }
+                    }
                     IconButton(onClick = {}) {
                         Icon(Icons.Default.MoreVert, contentDescription = "更多")
                     }
@@ -161,6 +176,7 @@ fun PlaylistScreen(
                         isCurrentlyPlaying = playerState.currentSong?.id == song.id,
                         isPlaying = playerState.currentSong?.id == song.id && playerState.isPlaying,
                         onClick = { onSongClick(song) },
+                        onMoreClick = { activeSongMenu = song }
                     )
                 }
                 if (isLoadingMore) {
@@ -196,6 +212,82 @@ fun PlaylistScreen(
                 }
             },
             confirmButton = {}
+        )
+    }
+
+    if (activeSongMenu != null) {
+        val song = activeSongMenu!!
+        ModalBottomSheet(
+            onDismissRequest = { activeSongMenu = null }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)) {
+                ListItem(
+                    headlineContent = { Text(song.title, fontWeight = FontWeight.Bold) },
+                    supportingContent = { Text(song.artist) }
+                )
+                HorizontalDivider()
+                
+                ListItem(
+                    headlineContent = { Text("插播下一首") },
+                    leadingContent = { Icon(Icons.Default.SkipNext, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        onInsertNext(song)
+                        activeSongMenu = null
+                    }
+                )
+                
+                ListItem(
+                    headlineContent = { Text("添加至队尾") },
+                    leadingContent = { Icon(Icons.Default.Queue, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        onAppendToQueue(song)
+                        activeSongMenu = null
+                    }
+                )
+                
+                ListItem(
+                    headlineContent = { Text("添加到本地歌单") },
+                    leadingContent = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
+                    modifier = Modifier.clickable {
+                        showPlaylistSelectDialogForSong = song
+                        activeSongMenu = null
+                    }
+                )
+                
+                if (playlist.id.startsWith("local_")) {
+                    val localId = playlist.id.removePrefix("local_").toLongOrNull()
+                    if (localId != null) {
+                        ListItem(
+                            headlineContent = { Text("从歌单中删除", color = MaterialTheme.colorScheme.error) },
+                            leadingContent = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                            modifier = Modifier.clickable {
+                                viewModel.removeSongFromPlaylist(localId, song.id.toLong())
+                                activeSongMenu = null
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPlaylistSelectDialogForSong != null) {
+        val song = showPlaylistSelectDialogForSong!!
+        val containingIds by viewModel.playlistsContainingSong.collectAsState()
+        
+        LaunchedEffect(song.id) {
+            viewModel.loadPlaylistsContainingSong(song.bvid ?: "", song.cid ?: 0L)
+        }
+        
+        SelectLocalPlaylistDialog(
+            playlists = localPlaylists,
+            containingIds = containingIds,
+            onDismiss = { showPlaylistSelectDialogForSong = null },
+            onSelect = { localPl ->
+                viewModel.addSongsToLocalPlaylist(localPl.id, listOf(song))
+                Toast.makeText(context, "添加成功！", Toast.LENGTH_SHORT).show()
+                showPlaylistSelectDialogForSong = null
+            }
         )
     }
 }
@@ -296,6 +388,7 @@ fun SongListItem(
     isCurrentlyPlaying: Boolean,
     isPlaying: Boolean,
     onClick: () -> Unit,
+    onMoreClick: () -> Unit,
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
@@ -360,15 +453,73 @@ fun SongListItem(
                     style = MaterialTheme.typography.labelSmall,
                     color = onSurfaceVariantColor,
                 )
-                Icon(
-                    Icons.Default.MoreVert,
-                    contentDescription = "更多",
-                    modifier = Modifier.size(18.dp),
-                    tint = onSurfaceVariantColor,
-                )
+                IconButton(
+                    onClick = onMoreClick,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多",
+                        modifier = Modifier.size(18.dp),
+                        tint = onSurfaceVariantColor,
+                    )
+                }
             }
         },
         modifier = Modifier.clickable { onClick() },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+    )
+}
+
+@Composable
+fun SelectLocalPlaylistDialog(
+    playlists: List<com.thehbc.bilimusic.data.local.room.LocalPlaylist>,
+    containingIds: List<Long>,
+    onDismiss: () -> Unit,
+    onSelect: (com.thehbc.bilimusic.data.local.room.LocalPlaylist) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加到本地歌单") },
+        text = {
+            if (playlists.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("暂无本地歌单，请先去“媒体库”创建")
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 250.dp)) {
+                    items(playlists) { playlist ->
+                        val isAlreadyContaining = containingIds.contains(playlist.id)
+                        ListItem(
+                            headlineContent = { Text(playlist.name) },
+                            supportingContent = { 
+                                Text(
+                                    if (isAlreadyContaining) "已包含此歌曲" 
+                                    else playlist.description.ifEmpty { "暂无描述" }
+                                ) 
+                            },
+                            leadingContent = {
+                                Icon(Icons.Default.QueueMusic, contentDescription = null)
+                            },
+                            modifier = Modifier.clickable(enabled = !isAlreadyContaining) { onSelect(playlist) },
+                            colors = ListItemDefaults.colors(
+                                containerColor = Color.Transparent,
+                                headlineColor = if (isAlreadyContaining) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) 
+                                                else MaterialTheme.colorScheme.onSurface,
+                                supportingColor = if (isAlreadyContaining) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) 
+                                                 else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
     )
 }

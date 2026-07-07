@@ -37,4 +37,7 @@ class LocalPlaylistRepository(private val playlistDao: LocalPlaylistDao) {
             playlistDao.deleteItemById(playlistId, itemId)
         }
     }
+
+    suspend fun getPlaylistIdsContainingSong(bvid: String, cid: Long): List<Long> =
+        playlistDao.getPlaylistIdsContainingSong(bvid, cid)
 }

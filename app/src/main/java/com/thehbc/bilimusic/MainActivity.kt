@@ -95,7 +95,8 @@ class MainActivity : ComponentActivity() {
                 val playlistViewModel: PlaylistViewModel = viewModel(
                     factory = PlaylistViewModel.provideFactory(
                         apiService = appContainer.biliApiService,
-                        localPlaylistRepository = appContainer.localPlaylistRepository
+                        localPlaylistRepository = appContainer.localPlaylistRepository,
+                        authManager = appContainer.authManager
                     )
                 )
 
@@ -207,6 +208,23 @@ fun BiliMusicApp(
                                 showPlayer = true
                             }
                         },
+                        onInsertNext = { song -> playerViewModel.insertNext(song) },
+                        onAppendToQueue = { song -> playerViewModel.appendToQueue(song) },
+                        onAddClick = {
+                            val localId = pl.id.removePrefix("local_")
+                            navController.navigate("add_songs/$localId")
+                        }
+                    )
+                }
+            }
+            composable("add_songs/{playlistId}") { backStackEntry ->
+                val playlistIdStr = backStackEntry.arguments?.getString("playlistId")
+                val playlistId = playlistIdStr?.toLongOrNull()
+                if (playlistId != null) {
+                    com.thehbc.bilimusic.ui.playlist.AddSongsScreen(
+                         playlistId = playlistId,
+                         viewModel = playlistViewModel,
+                         onBack = { navController.popBackStack() }
                     )
                 }
             }

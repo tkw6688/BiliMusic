@@ -37,4 +37,7 @@ interface LocalPlaylistDao {
     
     @Query("SELECT COALESCE(MAX(sortOrder), 0) FROM local_playlist_items WHERE playlistId = :playlistId")
     suspend fun getMaxSortOrder(playlistId: Long): Int
+
+    @Query("SELECT DISTINCT playlistId FROM local_playlist_items WHERE bvid = :bvid AND cid = :cid")
+    suspend fun getPlaylistIdsContainingSong(bvid: String, cid: Long): List<Long>
 }

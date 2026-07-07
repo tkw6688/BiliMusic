@@ -14,15 +14,74 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PlaylistViewModel(
-    private val apiService: BiliApiService,
-    private val localPlaylistRepository: LocalPlaylistRepository
+    val apiService: BiliApiService,
+    private val localPlaylistRepository: LocalPlaylistRepository,
+    private val authManager: com.thehbc.bilimusic.data.local.AuthManager
 ) : ViewModel() {
+
+    private val _biliPlaylists = MutableStateFlow<List<com.thehbc.bilimusic.data.model.Playlist>>(emptyList())
+    val biliPlaylists: StateFlow<List<com.thehbc.bilimusic.data.model.Playlist>> = _biliPlaylists.asStateFlow()
 
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
+
+    val localPlaylists: StateFlow<List<com.thehbc.bilimusic.data.local.room.LocalPlaylist>> =
+        localPlaylistRepository.getAllPlaylists()
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    private val _playlistsContainingSong = MutableStateFlow<List<Long>>(emptyList())
+    val playlistsContainingSong: StateFlow<List<Long>> = _playlistsContainingSong.asStateFlow()
+
+    fun loadPlaylistsContainingSong(bvid: String, cid: Long) {
+        viewModelScope.launch {
+            _playlistsContainingSong.value = localPlaylistRepository.getPlaylistIdsContainingSong(bvid, cid)
+        }
+    }
+
+    fun addSongsToLocalPlaylist(playlistId: Long, songs: List<Song>) {
+        viewModelScope.launch {
+            val existingItems = localPlaylistRepository.getItemsForPlaylistSync(playlistId)
+            val existingKeys = existingItems.map { "${it.bvid}_${it.cid}" }.toSet()
+            val items = songs.filter { song ->
+                val key = "${song.bvid}_${song.cid}"
+                !existingKeys.contains(key)
+            }.map { song ->
+                com.thehbc.bilimusic.data.local.room.LocalPlaylistItem(
+                    playlistId = playlistId,
+                    bvid = song.bvid ?: "",
+                    cid = song.cid ?: 0L,
+                    title = song.title,
+                    artist = song.artist,
+                    durationStr = song.duration,
+                    albumArtUrl = song.albumArtUrl,
+                    parentTitle = song.parentTitle,
+                    sortOrder = 0,
+                    page = song.page,
+                    partTitle = song.partTitle
+                )
+            }
+            if (items.isNotEmpty()) {
+                localPlaylistRepository.addItemsToPlaylist(playlistId, items)
+            }
+            if (currentPlaylistId == "local_$playlistId") {
+                loadPlaylist("local_$playlistId")
+            }
+        }
+    }
+
+    fun removeSongFromPlaylist(playlistId: Long, itemId: Long) {
+        viewModelScope.launch {
+            localPlaylistRepository.removeItemsFromPlaylist(playlistId, listOf(itemId))
+            if (currentPlaylistId == "local_$playlistId") {
+                loadPlaylist("local_$playlistId")
+            }
+        }
+    }
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -242,9 +301,104 @@ class PlaylistViewModel(
             } catch (e: Exception) {
                 onComplete(fullList)
             } finally {
-                _isLoadingMore.value = false
+    fun loadBiliPlaylists() {
+        viewModelScope.launch {
+            val uid = authManager.uidFlow.firstOrNull() ?: return@launch
+            try {
+                val response = apiService.getCreatedFavFolders(upMid = uid)
+                if (response.code == 0) {
+                    _biliPlaylists.value = response.data?.list?.map { folder ->
+                        com.thehbc.bilimusic.data.model.Playlist(
+                            id = folder.id.toString(),
+                            name = folder.title ?: "未命名收藏夹",
+                            songCount = folder.media_count ?: 0,
+                            coverColor = androidx.compose.ui.graphics.Color(0xFFFB7299),
+                            description = "B站收藏夹"
+                        )
+                    } ?: emptyList()
+                }
+            } catch (e: Exception) {
+                // ignore
             }
         }
+    }
+
+    fun addSongByBvid(
+        playlistId: Long,
+        bvid: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val response = apiService.getVideoDetail(bvid)
+                if (response.code == 0 && response.data != null) {
+                    val data = response.data
+                    val uploader = data.owner?.name ?: "未知歌手"
+                    val title = data.title ?: "未知歌曲"
+                    val cover = data.pic
+                    
+                    val existingKeys = getExistingKeysForPlaylist(playlistId)
+                    val itemsToAdd = if (data.pages != null && data.pages.size > 1) {
+                        data.pages.map { page ->
+                            com.thehbc.bilimusic.data.local.room.LocalPlaylistItem(
+                                playlistId = playlistId,
+                                bvid = bvid,
+                                cid = page.cid,
+                                title = BiliTitleParser.cleanPageTitle(page.part ?: "未知歌曲"),
+                                artist = uploader,
+                                durationStr = String.format("%02d:%02d", page.duration / 60, page.duration % 60),
+                                albumArtUrl = cover,
+                                parentTitle = title,
+                                sortOrder = 0,
+                                page = page.page,
+                                partTitle = page.part
+                            )
+                        }
+                    } else {
+                        val durationSeconds = data.duration
+                        val minutes = durationSeconds / 60
+                        val seconds = durationSeconds % 60
+                        listOf(
+                            com.thehbc.bilimusic.data.local.room.LocalPlaylistItem(
+                                playlistId = playlistId,
+                                bvid = bvid,
+                                cid = data.cid ?: 0L,
+                                title = title,
+                                artist = uploader,
+                                durationStr = String.format("%02d:%02d", minutes, seconds),
+                                albumArtUrl = cover,
+                                parentTitle = null,
+                                sortOrder = 0,
+                                page = 1,
+                                partTitle = title
+                            )
+                        )
+                    }
+                    val nonDuplicateItems = itemsToAdd.filter { item ->
+                        val key = "${item.bvid}_${item.cid}"
+                        !existingKeys.contains(key)
+                    }
+                    if (nonDuplicateItems.isNotEmpty()) {
+                        localPlaylistRepository.addItemsToPlaylist(playlistId, nonDuplicateItems)
+                    }
+                    if (currentPlaylistId == "local_$playlistId") {
+                        loadPlaylist("local_$playlistId")
+                    }
+                    onSuccess()
+                } else {
+                    onError(response.message)
+                }
+            } catch (e: Exception) {
+                onError("获取视频信息失败: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun getExistingKeysForPlaylist(playlistId: Long): Set<String> {
+        return localPlaylistRepository.getItemsForPlaylistSync(playlistId)
+            .map { "${it.bvid}_${it.cid}" }
+            .toSet()
     }
 
     fun mapToSingleSong(media: FavMedia): Song {
@@ -269,12 +423,13 @@ class PlaylistViewModel(
     companion object {
         fun provideFactory(
             apiService: BiliApiService,
-            localPlaylistRepository: LocalPlaylistRepository
+            localPlaylistRepository: LocalPlaylistRepository,
+            authManager: com.thehbc.bilimusic.data.local.AuthManager
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    PlaylistViewModel(apiService, localPlaylistRepository) as T
+                    PlaylistViewModel(apiService, localPlaylistRepository, authManager) as T
             }
     }
 }
