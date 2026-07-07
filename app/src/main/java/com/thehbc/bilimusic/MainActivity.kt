@@ -69,7 +69,9 @@ class MainActivity : ComponentActivity() {
                 val playerViewModel: PlayerViewModel = viewModel(
                     factory = PlayerViewModel.provideFactory(
                         application = application,
-                        apiService = appContainer.biliApiService
+                        apiService = appContainer.biliApiService,
+                        playerPrefsManager = appContainer.playerPrefsManager,
+                        activeQueueDao = appContainer.appDatabase.localActiveQueueDao()
                     )
                 )
                 val libraryViewModel: LibraryViewModel = viewModel(

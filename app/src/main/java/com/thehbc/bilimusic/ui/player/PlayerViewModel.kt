@@ -25,7 +25,10 @@ import com.thehbc.bilimusic.data.model.Playlist
 import com.thehbc.bilimusic.data.model.Song
 import com.thehbc.bilimusic.data.network.api.BiliApiService
 import com.thehbc.bilimusic.service.BiliMediaService
-import kotlinx.coroutines.delay
+import com.thehbc.bilimusic.data.local.PlayerPrefsManager
+import com.thehbc.bilimusic.data.local.room.LocalActiveQueueDao
+import com.thehbc.bilimusic.data.local.room.LocalActiveQueueItem
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -63,7 +66,9 @@ data class PlayerState(
  */
 class PlayerViewModel(
     application: Application,
-    private val apiService: BiliApiService
+    private val apiService: BiliApiService,
+    private val playerPrefsManager: PlayerPrefsManager,
+    private val activeQueueDao: LocalActiveQueueDao
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(PlayerState())
@@ -74,6 +79,8 @@ class PlayerViewModel(
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
+    
+    private var isRestorationComplete = false
 
     private val mediaCommandReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -87,6 +94,66 @@ class PlayerViewModel(
     init {
         initializeController()
         startProgressTracker()
+        
+        // 观察播放器配置状态并持久化
+        viewModelScope.launch {
+            var lastSongId: String? = null
+            var lastRepeatMode: RepeatMode? = null
+            var lastIsShuffled: Boolean? = null
+            
+            state.collect { currentState ->
+                if (!isRestorationComplete) return@collect
+                
+                val songId = currentState.currentSong?.id
+                val repeatMode = currentState.repeatMode
+                val isShuffled = currentState.isShuffled
+                
+                if (songId != lastSongId || repeatMode != lastRepeatMode || isShuffled != lastIsShuffled) {
+                    lastSongId = songId
+                    lastRepeatMode = repeatMode
+                    lastIsShuffled = isShuffled
+                    
+                    playerPrefsManager.savePlayerState(
+                        songId = songId,
+                        position = currentState.currentPositionMs,
+                        repeatMode = when (repeatMode) {
+                            RepeatMode.OFF -> 0
+                            RepeatMode.ALL -> 1
+                            RepeatMode.ONE -> 2
+                        },
+                        isShuffled = isShuffled
+                    )
+                }
+            }
+        }
+
+        // 观察队列变化并持久化
+        viewModelScope.launch {
+            var lastQueue: List<Song>? = null
+            state.collect { currentState ->
+                if (!isRestorationComplete) return@collect
+                
+                if (currentState.queue != lastQueue) {
+                    lastQueue = currentState.queue
+                    val queueItems = currentState.queue.mapIndexed { index, song ->
+                        LocalActiveQueueItem(
+                            songId = song.id,
+                            bvid = song.bvid,
+                            cid = song.cid,
+                            title = song.title,
+                            artist = song.artist,
+                            durationStr = song.duration,
+                            albumArtUrl = song.albumArtUrl,
+                            parentTitle = song.parentTitle,
+                            page = song.page,
+                            partTitle = song.partTitle,
+                            sortOrder = index
+                        )
+                    }
+                    activeQueueDao.saveActiveQueue(queueItems)
+                }
+            }
+        }
         
         val filter = IntentFilter().apply {
             addAction("com.thehbc.bilimusic.ACTION_SKIP_NEXT")
@@ -110,6 +177,7 @@ class PlayerViewModel(
             {
                 mediaController = controllerFuture?.get()
                 setupPlayerListener()
+                restorePersistedState()
             },
             MoreExecutors.directExecutor()
         )
@@ -159,6 +227,7 @@ class PlayerViewModel(
 
     private fun startProgressTracker() {
         viewModelScope.launch {
+            var ticks = 0
             while (true) {
                 delay(100)
                 mediaController?.let { player ->
@@ -172,6 +241,20 @@ class PlayerViewModel(
                                     currentPositionMs = pos,
                                     durationMs = dur,
                                 ) 
+                            }
+                            ticks++
+                            if (ticks >= 50) {
+                                ticks = 0
+                                playerPrefsManager.savePlayerState(
+                                    songId = _state.value.currentSong?.id,
+                                    position = pos,
+                                    repeatMode = when (_state.value.repeatMode) {
+                                        RepeatMode.OFF -> 0
+                                        RepeatMode.ALL -> 1
+                                        RepeatMode.ONE -> 2
+                                    },
+                                    isShuffled = _state.value.isShuffled
+                                )
                             }
                         }
                     }
@@ -276,6 +359,19 @@ class PlayerViewModel(
         mediaController?.let { player ->
             if (player.isPlaying) {
                 player.pause()
+                // 暂停时保存进度
+                viewModelScope.launch {
+                    playerPrefsManager.savePlayerState(
+                        songId = _state.value.currentSong?.id,
+                        position = _state.value.currentPositionMs,
+                        repeatMode = when (_state.value.repeatMode) {
+                            RepeatMode.OFF -> 0
+                            RepeatMode.ALL -> 1
+                            RepeatMode.ONE -> 2
+                        },
+                        isShuffled = _state.value.isShuffled
+                    )
+                }
             } else {
                 player.play()
             }
@@ -424,6 +520,164 @@ class PlayerViewModel(
         _state.update { it.copy(queue = newQueue, currentIndex = newCurrentIndex) }
     }
 
+    fun insertNext(song: Song) {
+        val currentState = _state.value
+        val queue = currentState.queue
+        
+        val cleanQueue = queue.toMutableList()
+        val oldIndex = cleanQueue.indexOfFirst { it.id == song.id }
+        
+        var currentIndex = currentState.currentIndex
+        if (oldIndex != -1) {
+            cleanQueue.removeAt(oldIndex)
+            if (oldIndex < currentIndex) {
+                currentIndex--
+            }
+        }
+        
+        val insertIndex = if (cleanQueue.isEmpty()) 0 else (currentIndex + 1)
+        cleanQueue.add(insertIndex, song)
+        
+        if (currentState.currentSong == null) {
+            playSong(song, newQueue = cleanQueue)
+        } else {
+            val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
+            _state.update {
+                it.copy(
+                    queue = cleanQueue,
+                    currentIndex = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
+                )
+            }
+        }
+    }
+
+    fun appendToQueue(song: Song) {
+        val currentState = _state.value
+        val queue = currentState.queue
+        
+        val cleanQueue = queue.toMutableList()
+        val oldIndex = cleanQueue.indexOfFirst { it.id == song.id }
+        
+        var currentIndex = currentState.currentIndex
+        if (oldIndex != -1) {
+            cleanQueue.removeAt(oldIndex)
+            if (oldIndex < currentIndex) {
+                currentIndex--
+            }
+        }
+        
+        cleanQueue.add(song)
+        
+        if (currentState.currentSong == null) {
+            playSong(song, newQueue = cleanQueue)
+        } else {
+            val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
+            _state.update {
+                it.copy(
+                    queue = cleanQueue,
+                    currentIndex = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
+                )
+            }
+        }
+    }
+
+    private fun restorePersistedState() {
+        viewModelScope.launch {
+            try {
+                // 1. 读取队列
+                val queueItems = activeQueueDao.getActiveQueue()
+                if (queueItems.isEmpty()) {
+                    isRestorationComplete = true
+                    return@launch
+                }
+                
+                val restoredSongs = queueItems.map { item ->
+                    Song(
+                        id = item.songId,
+                        bvid = item.bvid,
+                        cid = item.cid,
+                        title = item.title,
+                        artist = item.artist,
+                        duration = item.durationStr,
+                        albumArtUrl = item.albumArtUrl,
+                        parentTitle = item.parentTitle,
+                        page = item.page,
+                        partTitle = item.partTitle
+                    )
+                }
+
+                // 2. 读取配置
+                val lastSongId = playerPrefsManager.lastPlayingSongIdFlow.firstOrNull()
+                val lastPos = playerPrefsManager.lastPlaybackPositionFlow.firstOrNull() ?: 0L
+                val lastRepeat = playerPrefsManager.lastRepeatModeFlow.firstOrNull() ?: 0
+                val lastShuffle = playerPrefsManager.lastShuffleModeFlow.firstOrNull() ?: false
+
+                val repeatModeObj = when (lastRepeat) {
+                    1 -> RepeatMode.ALL
+                    2 -> RepeatMode.ONE
+                    else -> RepeatMode.OFF
+                }
+
+                val currentSongObj = restoredSongs.firstOrNull { it.id == lastSongId } ?: restoredSongs.firstOrNull()
+                val currentIndexVal = restoredSongs.indexOf(currentSongObj)
+
+                // 3. 更新 UI 状态
+                _state.update {
+                    it.copy(
+                        queue = restoredSongs,
+                        currentSong = currentSongObj,
+                        currentIndex = currentIndexVal,
+                        currentPositionMs = lastPos,
+                        repeatMode = repeatModeObj,
+                        isShuffled = lastShuffle
+                    )
+                }
+
+                // 4. 将队列设置到 ExoPlayer 中，但不自动播放
+                mediaController?.let { player ->
+                    player.clearMediaItems()
+                    
+                    val mediaItems = restoredSongs.map { song ->
+                        val fakeUriStr = if (song.bvid != null && song.cid != null) {
+                            "bilimusic://play?bvid=${song.bvid}&cid=${song.cid}"
+                        } else {
+                            song.mediaUri ?: ""
+                        }
+                        
+                        val artistWithParent = buildString {
+                            append(song.artist)
+                            if (!song.parentTitle.isNullOrEmpty()) {
+                                append(" · ")
+                                append(song.parentTitle)
+                            }
+                        }
+                        val metadata = MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(artistWithParent)
+                            .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
+                            .build()
+
+                        MediaItem.Builder()
+                            .setMediaId(song.id)
+                            .setUri(Uri.parse(fakeUriStr))
+                            .setMediaMetadata(metadata)
+                            .build()
+                    }
+                    player.setMediaItems(mediaItems)
+                    
+                    if (currentIndexVal >= 0 && currentIndexVal < mediaItems.size) {
+                        player.seekTo(currentIndexVal, lastPos)
+                    }
+                    player.prepare()
+                }
+            } catch (e: Exception) {
+                // 静默失败
+            } finally {
+                isRestorationComplete = true
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         getApplication<Application>().unregisterReceiver(mediaCommandReceiver)
@@ -431,11 +685,16 @@ class PlayerViewModel(
     }
 
     companion object {
-        fun provideFactory(application: Application, apiService: BiliApiService): ViewModelProvider.Factory =
+        fun provideFactory(
+            application: Application,
+            apiService: BiliApiService,
+            playerPrefsManager: PlayerPrefsManager,
+            activeQueueDao: LocalActiveQueueDao
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return PlayerViewModel(application, apiService) as T
+                    return PlayerViewModel(application, apiService, playerPrefsManager, activeQueueDao) as T
                 }
             }
     }

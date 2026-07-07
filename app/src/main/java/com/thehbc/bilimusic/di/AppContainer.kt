@@ -19,6 +19,10 @@ class AppContainer(private val context: Context) {
         AuthManager(context)
     }
 
+    val playerPrefsManager: com.thehbc.bilimusic.data.local.PlayerPrefsManager by lazy {
+        com.thehbc.bilimusic.data.local.PlayerPrefsManager(context)
+    }
+
     private val okHttpClient: OkHttpClient by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY // 用于调试
