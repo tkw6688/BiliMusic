@@ -24,6 +24,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.thehbc.bilimusic.data.model.Playlist
 
+import androidx.compose.ui.draw.alpha
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    val activeNetwork = connectivityManager?.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -38,6 +52,12 @@ fun LibraryScreen(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
         state = rememberTopAppBarState()
     )
+
+    val context = LocalContext.current
+    var isOffline by remember { mutableStateOf(false) }
+    LaunchedEffect(context) {
+        isOffline = !isNetworkAvailable(context)
+    }
 
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
@@ -173,9 +193,18 @@ fun LibraryScreen(
                             )
                         }
                         items(playlists, key = { "bili_${it.id}" }) { playlist ->
+                            val isCached = remember(playlist.id) { libraryViewModel.isPlaylistCached(playlist.id) }
+                            val isPlayable = !isOffline || isCached
                             PlaylistCard(
                                 playlist = playlist,
-                                onClick = { onPlaylistClick(playlist) }
+                                isPlayable = isPlayable,
+                                onClick = {
+                                    if (isPlayable) {
+                                        onPlaylistClick(playlist)
+                                    } else {
+                                        Toast.makeText(context, "处于离线状态，且该收藏夹未缓存", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             )
                         }
                     }
@@ -188,13 +217,15 @@ fun LibraryScreen(
 @Composable
 fun PlaylistCard(
     playlist: Playlist,
+    isPlayable: Boolean = true,
     onClick: () -> Unit,
 ) {
     Card(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.82f),
+            .aspectRatio(0.82f)
+            .alpha(if (isPlayable) 1f else 0.38f),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,

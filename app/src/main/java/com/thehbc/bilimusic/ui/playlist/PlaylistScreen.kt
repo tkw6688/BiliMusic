@@ -34,6 +34,17 @@ import com.thehbc.bilimusic.data.model.Playlist
 import com.thehbc.bilimusic.data.model.Song
 import com.thehbc.bilimusic.ui.player.PlayerState
 import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
+import androidx.compose.ui.draw.alpha
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.content.Context
+
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    val activeNetwork = connectivityManager?.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +72,11 @@ fun PlaylistScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     
     val context = LocalContext.current
+    var isOffline by remember { mutableStateOf(false) }
+    LaunchedEffect(context) {
+        isOffline = !isNetworkAvailable(context)
+    }
+    
     var activeSongMenu by remember { mutableStateOf<Song?>(null) }
     var showPlaylistSelectDialogForSong by remember { mutableStateOf<Song?>(null) }
     val localPlaylists by viewModel.localPlaylists.collectAsState()
@@ -150,45 +166,101 @@ fun PlaylistScreen(
                             isFullLoading = true
                             viewModel.getPlaylistSongsFull(playlist.id, songs) { fullSongs ->
                                 isFullLoading = false
-                                onPlayAll(fullSongs)
+                                val playableSongs = if (isOffline) {
+                                    fullSongs.filter { viewModel.isSongCached(it) }
+                                } else {
+                                    fullSongs
+                                }
+                                if (playableSongs.isNotEmpty()) {
+                                    onPlayAll(playableSongs)
+                                } else {
+                                    Toast.makeText(context, "当前处于离线状态，无已缓存的歌曲可供播放", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         } else {
-                            onPlayAll(songs)
+                            val playableSongs = if (isOffline) {
+                                songs.filter { viewModel.isSongCached(it) }
+                            } else {
+                                songs
+                            }
+                            if (playableSongs.isNotEmpty()) {
+                                onPlayAll(playableSongs)
+                            } else {
+                                Toast.makeText(context, "当前处于离线状态，无已缓存的歌曲可供播放", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     },
                 )
             }
             
-            if (isLoading) {
+            if (isLoading && songs.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp),
+                            .fillParentMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator()
                     }
                 }
-            } else if (error != null) {
+            } else if (error != null && songs.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp),
+                            .fillParentMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(error ?: "", color = MaterialTheme.colorScheme.error)
                     }
                 }
             } else {
+                if (error != null) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer
+                            )
+                        ) {
+                            Text(
+                                text = error ?: "",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    }
+                }
+                if (isLoading) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    }
+                }
                 // 歌曲列表
                 items(songs, key = { it.id }) { song ->
+                    val isCached = remember(song.id) { viewModel.isSongCached(song) }
+                    val isPlayable = !isOffline || isCached
                     SongListItem(
                         song = song,
                         isCurrentlyPlaying = playerState.currentSong?.id == song.id,
                         isPlaying = playerState.currentSong?.id == song.id && playerState.isPlaying,
-                        onClick = { onSongClick(song) },
+                        isPlayable = isPlayable,
+                        onClick = {
+                            if (isPlayable) {
+                                onSongClick(song)
+                            } else {
+                                Toast.makeText(context, "处于离线状态，且该歌曲未下载", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onMoreClick = { activeSongMenu = song }
                     )
                 }
@@ -400,6 +472,7 @@ fun SongListItem(
     song: Song,
     isCurrentlyPlaying: Boolean,
     isPlaying: Boolean,
+    isPlayable: Boolean = true,
     onClick: () -> Unit,
     onMoreClick: () -> Unit,
 ) {
@@ -479,7 +552,9 @@ fun SongListItem(
                 }
             }
         },
-        modifier = Modifier.clickable { onClick() },
+        modifier = Modifier
+            .clickable { onClick() }
+            .alpha(if (isPlayable) 1f else 0.38f),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
 }

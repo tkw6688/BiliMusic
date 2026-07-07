@@ -25,11 +25,20 @@ interface BiliRepository {
     suspend fun getVideoDetail(bvid: String): Result<VideoDetailResponse>
     suspend fun getPlayUrl(bvid: String, cid: Long): Result<String>
     suspend fun prefetchPlayUrl(bvid: String, cid: Long)
+    
+    // Cache methods
+    fun getPlaylistsCache(): List<Playlist>?
+    fun savePlaylistsCache(playlists: List<Playlist>)
+    fun getSongsCache(playlistId: String): List<Song>?
+    fun saveSongsCache(playlistId: String, songs: List<Song>)
+    fun isSongCached(song: Song): Boolean
 }
 
 class BiliRepositoryImpl(
     private val apiService: BiliApiService,
     private val authManager: AuthManager,
+    private val metadataCacheManager: com.thehbc.bilimusic.data.local.MetadataCacheManager,
+    private val simpleCache: androidx.media3.datasource.cache.SimpleCache,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : BiliRepository {
 
@@ -211,5 +220,24 @@ class BiliRepositoryImpl(
 
     override suspend fun prefetchPlayUrl(bvid: String, cid: Long) {
         getPlayUrl(bvid, cid)
+    }
+
+    override fun getPlaylistsCache(): List<Playlist>? = metadataCacheManager.getPlaylists()
+    override fun savePlaylistsCache(playlists: List<Playlist>) = metadataCacheManager.savePlaylists(playlists)
+    override fun getSongsCache(playlistId: String): List<Song>? = metadataCacheManager.getSongs(playlistId)
+    override fun saveSongsCache(playlistId: String, songs: List<Song>) = metadataCacheManager.saveSongs(playlistId, songs)
+    override fun isSongCached(song: Song): Boolean {
+        val cacheKey = if (song.bvid != null && song.cid != null) {
+            "bilimusic_${song.bvid}_${song.cid}"
+        } else {
+            "bilimusic_${song.id}"
+        }
+        val metadata = simpleCache.getContentMetadata(cacheKey)
+        val contentLength = metadata.get(
+            androidx.media3.datasource.cache.ContentMetadata.KEY_CONTENT_LENGTH,
+            -1L
+        )
+        return contentLength != -1L &&
+                simpleCache.getCachedBytes(cacheKey, 0, contentLength) == contentLength
     }
 }

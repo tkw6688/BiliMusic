@@ -37,19 +37,31 @@ import coil3.compose.AsyncImage
 import com.thehbc.bilimusic.data.model.Playlist
 import com.thehbc.bilimusic.data.model.Song
 import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
+import androidx.compose.ui.draw.alpha
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.content.Context
 import java.util.Locale
 
-/**
- * 全屏播放器内容。
- * 由外层 ModalBottomSheet 包裹，skipPartiallyExpanded = true 使其直接全屏弹出。
- * 遵循 MD3 BottomSheet 规范：顶部 DragHandle 由 ModalBottomSheet 自动提供。
- */
+private fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    val activeNetwork = connectivityManager?.activeNetwork ?: return false
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
+
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel,
 ) {
     val state by viewModel.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    
+    val context = LocalContext.current
+    var isOffline by remember { mutableStateOf(false) }
+    LaunchedEffect(context) {
+        isOffline = !isNetworkAvailable(context)
+    }
     
     LaunchedEffect(Unit) {
         viewModel.errorEvent.collect { errorMsg ->
@@ -68,7 +80,9 @@ fun PlayerScreen(
             onCycleRepeatMode = viewModel::cyclePlayMode,
             onPlaySong = { viewModel.playSong(it) },
             onRemoveSong = { viewModel.removeSongById(it) },
-            onMoveSong = { from, to -> viewModel.moveSong(from, to) }
+            onMoveSong = { from, to -> viewModel.moveSong(from, to) },
+            isSongCached = viewModel::isSongCached,
+            isOffline = isOffline
         )
         
         SnackbarHost(
@@ -91,7 +105,9 @@ fun PlayerScreenContent(
     onCycleRepeatMode: () -> Unit,
     onPlaySong: (com.thehbc.bilimusic.data.model.Song) -> Unit,
     onRemoveSong: (String) -> Unit,
-    onMoveSong: (Int, Int) -> Unit
+    onMoveSong: (Int, Int) -> Unit,
+    isSongCached: (com.thehbc.bilimusic.data.model.Song) -> Boolean = { false },
+    isOffline: Boolean = false
 ) {
     val song = state.currentSong
     val coverColor = state.currentPlaylist?.coverColor
@@ -125,9 +141,18 @@ fun PlayerScreenContent(
                     QueueBottomSheet(
                         state = state,
                         onDismiss = { showQueueSheet = false },
-                        onPlaySong = onPlaySong,
+                        onPlaySong = { song ->
+                            val playable = !isOffline || isSongCached(song)
+                            if (playable) {
+                                onPlaySong(song)
+                            } else {
+                                Toast.makeText(context, "处于离线状态，且该歌曲未下载", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onRemoveSong = onRemoveSong,
-                        onMoveSong = onMoveSong
+                        onMoveSong = onMoveSong,
+                        isSongCached = isSongCached,
+                        isOffline = isOffline
                     )
                 }
 

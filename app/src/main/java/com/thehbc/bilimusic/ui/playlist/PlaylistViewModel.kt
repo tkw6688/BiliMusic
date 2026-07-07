@@ -162,6 +162,12 @@ class PlaylistViewModel(
                             if (pl != null) {
                                 _currentPlaylist.value = pl
                             }
+                        }.onFailure {
+                            val cachedList = biliRepository.getPlaylistsCache()
+                            val pl = cachedList?.firstOrNull { it.id == playlistId }
+                            if (pl != null) {
+                                _currentPlaylist.value = pl
+                            }
                         }
                     }
                     
@@ -202,13 +208,25 @@ class PlaylistViewModel(
                     _songs.value = _songs.value + newSongs
                 } else {
                     _songs.value = newSongs
+                    biliRepository.saveSongsCache(mediaId.toString(), newSongs)
                 }
             }
             .onFailure { exception ->
                 if (!isAppend) {
-                    _error.value = exception.message ?: "加载歌曲失败"
+                    val cached = biliRepository.getSongsCache(mediaId.toString())
+                    if (!cached.isNullOrEmpty()) {
+                        _songs.value = cached
+                        hasMore = false
+                        _error.value = "已离线：显示本地缓存歌曲"
+                    } else {
+                        _error.value = exception.message ?: "加载歌曲失败"
+                    }
                 }
             }
+    }
+
+    fun isSongCached(song: Song): Boolean {
+        return biliRepository.isSongCached(song)
     }
 
     fun getPlaylistSongsFull(playlistId: String, currentSongs: List<Song>, onComplete: (List<Song>) -> Unit) {

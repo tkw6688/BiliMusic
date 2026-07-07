@@ -23,6 +23,16 @@ class AppContainer(private val context: Context) {
         com.thehbc.bilimusic.data.local.PlayerPrefsManager(context)
     }
 
+    val databaseProvider: androidx.media3.database.DatabaseProvider by lazy {
+        androidx.media3.database.StandaloneDatabaseProvider(context)
+    }
+
+    val simpleCache: androidx.media3.datasource.cache.SimpleCache by lazy {
+        val cacheDir = java.io.File(context.cacheDir, "audio_cache")
+        val evictor = androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(512 * 1024 * 1024L) // 512 MB limit
+        androidx.media3.datasource.cache.SimpleCache(cacheDir, evictor, databaseProvider)
+    }
+
     private val okHttpClient: OkHttpClient by lazy {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY // 用于调试
@@ -54,7 +64,11 @@ class AppContainer(private val context: Context) {
         LocalPlaylistRepository(appDatabase.localPlaylistDao())
     }
 
+    val metadataCacheManager: com.thehbc.bilimusic.data.local.MetadataCacheManager by lazy {
+        com.thehbc.bilimusic.data.local.MetadataCacheManager(context)
+    }
+
     val biliRepository: com.thehbc.bilimusic.data.repository.BiliRepository by lazy {
-        com.thehbc.bilimusic.data.repository.BiliRepositoryImpl(biliApiService, authManager)
+        com.thehbc.bilimusic.data.repository.BiliRepositoryImpl(biliApiService, authManager, metadataCacheManager, simpleCache)
     }
 }

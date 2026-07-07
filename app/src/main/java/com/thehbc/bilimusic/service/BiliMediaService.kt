@@ -105,8 +105,13 @@ class BiliMediaService : MediaSessionService() {
             }
         )
 
+        val cacheDataSourceFactory = androidx.media3.datasource.cache.CacheDataSource.Factory()
+            .setCache(appContainer.simpleCache)
+            .setUpstreamDataSourceFactory(resolvingDataSourceFactory)
+            .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
-            .setDataSourceFactory(resolvingDataSourceFactory)
+            .setDataSourceFactory(cacheDataSourceFactory)
             
         val exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true) // 处理音频焦点

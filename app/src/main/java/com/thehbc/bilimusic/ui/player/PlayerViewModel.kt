@@ -112,9 +112,16 @@ class PlayerViewModel(
             .setExtras(extras)
             .build()
 
+        val cacheKey = if (bvid != null && cid != null) {
+            "bilimusic_${bvid}_${cid}"
+        } else {
+            "bilimusic_$id"
+        }
+
         return MediaItem.Builder()
             .setMediaId(id)
             .setUri(Uri.parse(fakeUriStr))
+            .setCustomCacheKey(cacheKey)
             .setMediaMetadata(metadata)
             .build()
     }
@@ -475,6 +482,10 @@ class PlayerViewModel(
                 audioCodec = null
             )
         }
+    }
+
+    fun isSongCached(song: Song): Boolean {
+        return biliRepository.isSongCached(song)
     }
 
     fun togglePlayPause() {

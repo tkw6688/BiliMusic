@@ -54,9 +54,16 @@ class LibraryViewModel(
             biliRepository.getCreatedPlaylists(uid)
                 .onSuccess { list ->
                     _playlists.value = list
+                    biliRepository.savePlaylistsCache(list)
                 }
                 .onFailure { exception ->
-                    _error.value = exception.message ?: "获取收藏夹失败"
+                    val cached = biliRepository.getPlaylistsCache()
+                    if (!cached.isNullOrEmpty()) {
+                        _playlists.value = cached
+                        _error.value = "已离线：显示本地缓存收藏夹"
+                    } else {
+                        _error.value = exception.message ?: "获取收藏夹失败"
+                    }
                 }
             _isLoading.value = false
         }
@@ -83,6 +90,10 @@ class LibraryViewModel(
                 fetchPlaylists(uid)
             }
         }
+    }
+
+    fun isPlaylistCached(playlistId: String): Boolean {
+        return biliRepository.getSongsCache(playlistId)?.isNotEmpty() == true
     }
 
     companion object {

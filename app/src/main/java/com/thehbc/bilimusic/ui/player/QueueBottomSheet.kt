@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -55,8 +58,11 @@ fun QueueBottomSheet(
     onDismiss: () -> Unit,
     onPlaySong: (Song) -> Unit,
     onRemoveSong: (String) -> Unit,
-    onMoveSong: (Int, Int) -> Unit
+    onMoveSong: (Int, Int) -> Unit,
+    isSongCached: (Song) -> Boolean,
+    isOffline: Boolean
 ) {
+    val context = LocalContext.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
@@ -143,11 +149,16 @@ fun QueueBottomSheet(
                         val canStartDrag = shouldAllowQueueDragStart(
                             hasOpenSwipeItem = openSwipeSongId != null
                         )
+                        val isPlayable = !isOffline || isSongCached(song)
                         val rowOnClick = {
                             if (openSwipeSongId == song.id) {
                                 openSwipeSongId = null
                             } else {
-                                onPlaySong(song)
+                                if (isPlayable) {
+                                    onPlaySong(song)
+                                } else {
+                                    Toast.makeText(context, "处于离线状态，且该歌曲未下载", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
 
@@ -157,6 +168,7 @@ fun QueueBottomSheet(
                                 isCurrentlyPlaying = true,
                                 elevation = elevation,
                                 dragHandleModifier = null,
+                                isPlayable = isPlayable,
                                 onClick = rowOnClick
                             )
                         } else {
@@ -198,6 +210,7 @@ fun QueueBottomSheet(
                                     } else {
                                         Modifier
                                     },
+                                    isPlayable = isPlayable,
                                     onClick = rowOnClick
                                 )
                             }
@@ -215,6 +228,7 @@ private fun QueueSongRow(
     isCurrentlyPlaying: Boolean,
     elevation: Dp,
     dragHandleModifier: Modifier?,
+    isPlayable: Boolean = true,
     onClick: () -> Unit
 ) {
     Row(
@@ -228,6 +242,7 @@ private fun QueueSongRow(
                 else MaterialTheme.colorScheme.surface
             )
             .clickable(onClick = onClick)
+            .alpha(if (isPlayable) 1f else 0.38f)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
