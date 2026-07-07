@@ -287,7 +287,10 @@ class PlayerViewModel(
         mediaController?.let { player ->
             val dur = player.duration
             if (dur > 0) {
-                player.seekTo((dur * progress).toLong())
+                val targetPosition = (dur * progress).toLong()
+                player.seekTo(targetPosition)
+                // 实时更新 currentPositionMs，解决暂停拖拽时时间不变化的问题
+                _state.update { it.copy(currentPositionMs = targetPosition) }
             }
         }
     }

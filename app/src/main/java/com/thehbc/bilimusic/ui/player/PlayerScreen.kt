@@ -135,9 +135,15 @@ fun PlayerScreenContent(
                         title = { Text("音频信息") },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("标题: ${song?.title ?: "未知"}")
+                                val hasParts = !song?.parentTitle.isNullOrEmpty()
+                                if (hasParts) {
+                                    Text("标题: ${song?.parentTitle ?: "未知"}")
+                                    Text("p数: ${song?.page ?: 1}")
+                                    Text("p名: ${song?.partTitle ?: song?.title ?: "未知"}")
+                                } else {
+                                    Text("标题: ${song?.title ?: "未知"}")
+                                }
                                 Text("BV号: ${song?.bvid ?: "未知"}")
-                                Text("CID: ${song?.cid ?: "未知"}")
                                 val bitrateStr = state.audioBitrate?.let { "${it / 1000} kbps" } ?: "未知"
                                 Text("比特率: $bitrateStr")
                                 val sampleRateStr = state.audioSampleRate?.let { "${it} Hz" } ?: "未知"
