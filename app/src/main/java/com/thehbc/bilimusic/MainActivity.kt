@@ -54,6 +54,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Android 13+ 动态申请通知权限，Android 12及以下不需要申请，默认开启
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val permission = "android.permission.POST_NOTIFICATIONS"
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(permission), 101)
+            }
+        }
+
         setContent {
             BiliMusicTheme {
                 val appContainer = (application as BiliMusicApp).container
