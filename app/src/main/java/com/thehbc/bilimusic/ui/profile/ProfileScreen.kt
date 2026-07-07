@@ -23,7 +23,8 @@ import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
-    onLoginClick: () -> Unit = {}
+    onLoginClick: () -> Unit = {},
+    onAboutClick: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -111,7 +112,7 @@ fun ProfileScreen(
             
             // 关于按钮
             Button(
-                onClick = { /* TODO: About Page */ },
+                onClick = onAboutClick,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 32.dp),

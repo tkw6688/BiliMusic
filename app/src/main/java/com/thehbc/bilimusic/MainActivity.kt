@@ -36,6 +36,7 @@ import com.thehbc.bilimusic.ui.profile.ProfileScreen
 import com.thehbc.bilimusic.ui.auth.LoginScreen
 import com.thehbc.bilimusic.ui.auth.AuthViewModel
 import com.thehbc.bilimusic.ui.profile.ProfileViewModel
+import com.thehbc.bilimusic.ui.profile.AboutScreen
 import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
 
 // 定义在文件级别，避免在 Composable 内部每次重建
@@ -231,7 +232,13 @@ fun BiliMusicApp(
             composable("profile") {
                 ProfileScreen(
                     viewModel = profileViewModel,
-                    onLoginClick = { navController.navigate("login") }
+                    onLoginClick = { navController.navigate("login") },
+                    onAboutClick = { navController.navigate("about") }
+                )
+            }
+            composable("about") {
+                AboutScreen(
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable("login") {

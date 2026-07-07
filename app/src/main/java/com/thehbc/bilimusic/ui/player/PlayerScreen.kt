@@ -21,6 +21,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -95,6 +97,7 @@ fun PlayerScreenContent(
     val coverColor = state.currentPlaylist?.coverColor
         ?: MaterialTheme.colorScheme.primaryContainer
     var showQueueSheet by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -117,7 +120,6 @@ fun PlayerScreenContent(
             Box {
                 var menuExpanded by remember { mutableStateOf(false) }
                 var showInfoDialog by remember { mutableStateOf(false) }
-                val context = LocalContext.current
                 
                 if (showQueueSheet) {
                     QueueBottomSheet(
@@ -180,10 +182,26 @@ fun PlayerScreenContent(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("在 B站打开") },
+                        text = { Text("在B站打开") },
                         onClick = {
                             menuExpanded = false
-                            Toast.makeText(context, "暂不支持此功能", Toast.LENGTH_SHORT).show()
+                            val currentSong = song
+                            if (currentSong != null && !currentSong.bvid.isNullOrEmpty()) {
+                                val pageIndex = (currentSong.page ?: 1) - 1
+                                val appUriStr = if (currentSong.parentTitle != null) {
+                                    "bilibili://video/${currentSong.bvid}?page=$pageIndex"
+                                } else {
+                                    "bilibili://video/${currentSong.bvid}"
+                                }
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(appUriStr))
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "未安装哔哩哔哩客户端", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "当前无播放歌曲或缺失B站视频ID", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     )
                 }
@@ -394,7 +412,46 @@ fun PlayerScreenContent(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = {}) {
+            IconButton(onClick = {
+                val currentSong = song
+                if (currentSong != null) {
+                    val bvid = currentSong.bvid
+                    if (!bvid.isNullOrEmpty()) {
+                        val shareUrl = if (currentSong.parentTitle != null && currentSong.page != null) {
+                            "https://www.bilibili.com/video/$bvid?p=${currentSong.page}"
+                        } else {
+                            "https://www.bilibili.com/video/$bvid"
+                        }
+                        val shareText = buildString {
+                            append("我在 BiliMusic 上听这首歌，推荐给你：\n")
+                            if (!currentSong.parentTitle.isNullOrEmpty()) {
+                                append("🎵 ${currentSong.parentTitle} - ${currentSong.title}")
+                            } else {
+                                append("🎵 ${currentSong.title}")
+                            }
+                            if (!currentSong.artist.isNullOrEmpty()) {
+                                append(" - ${currentSong.artist}")
+                            }
+                            append("\n链接：$shareUrl")
+                        }
+                        try {
+                            val sendIntent = Intent().apply {
+                                action = Intent.ACTION_SEND
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                type = "text/plain"
+                            }
+                            val shareIntent = Intent.createChooser(sendIntent, "分享歌曲")
+                            context.startActivity(shareIntent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "分享失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(context, "无法分享该歌曲，缺少 B 站视频 ID (BV号)", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(context, "当前未播放任何歌曲", Toast.LENGTH_SHORT).show()
+                }
+            }) {
                 Icon(
                     Icons.Default.Share,
                     contentDescription = "分享",
