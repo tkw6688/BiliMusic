@@ -38,7 +38,7 @@ import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistScreen(
-    playlist: Playlist,
+    playlistId: String,
     viewModel: PlaylistViewModel,
     playerState: PlayerState,
     onBack: () -> Unit,
@@ -51,6 +51,9 @@ fun PlaylistScreen(
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
         state = rememberTopAppBarState()
     )
+    
+    val playlistState by viewModel.currentPlaylist.collectAsState()
+    val playlist = playlistState
     
     val songs by viewModel.songs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -65,8 +68,18 @@ fun PlaylistScreen(
     var isFullLoading by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(playlist.id) {
-        viewModel.loadPlaylist(playlist.id)
+    LaunchedEffect(playlistId) {
+        viewModel.loadPlaylist(playlistId)
+    }
+
+    if (playlist == null) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator()
+        }
+        return
     }
 
     // 监听滑动触底，自动加载下一页

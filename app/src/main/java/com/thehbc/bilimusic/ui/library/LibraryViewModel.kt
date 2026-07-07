@@ -32,9 +32,7 @@ class LibraryViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    // 当前选中的歌单 (可以是 B站收藏夹，未来也可以扩展成本地歌单)
-    private val _selectedPlaylist = MutableStateFlow<Playlist?>(null)
-    val selectedPlaylist: StateFlow<Playlist?> = _selectedPlaylist.asStateFlow()
+
 
     init {
         // 监听 uid 变化，当 uid 有值时自动拉取收藏夹
@@ -64,9 +62,7 @@ class LibraryViewModel(
         }
     }
 
-    fun selectPlaylist(playlist: Playlist) {
-        _selectedPlaylist.value = playlist
-    }
+
 
     fun createLocalPlaylist(name: String, description: String = "") {
         viewModelScope.launch {

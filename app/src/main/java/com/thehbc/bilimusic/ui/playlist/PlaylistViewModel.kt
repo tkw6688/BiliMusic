@@ -31,6 +31,9 @@ class PlaylistViewModel(
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
 
+    private val _currentPlaylist = MutableStateFlow<com.thehbc.bilimusic.data.model.Playlist?>(null)
+    val currentPlaylist: StateFlow<com.thehbc.bilimusic.data.model.Playlist?> = _currentPlaylist.asStateFlow()
+
     val localPlaylists: StateFlow<List<com.thehbc.bilimusic.data.local.room.LocalPlaylist>> =
         localPlaylistRepository.getAllPlaylists()
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -102,6 +105,7 @@ class PlaylistViewModel(
         currentPage = 1
         hasMore = false
         _songs.value = emptyList()
+        _currentPlaylist.value = null
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
@@ -113,8 +117,21 @@ class PlaylistViewModel(
                         _error.value = "无效的本地歌单 ID"
                         return@launch
                     }
+                    
+                    val localPl = localPlaylistRepository.getPlaylistById(localId)
+                    if (localPl != null) {
+                        _currentPlaylist.value = com.thehbc.bilimusic.data.model.Playlist(
+                            id = "local_${localPl.id}",
+                            name = localPl.name,
+                            songCount = 0,
+                            coverColor = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                            description = localPl.description ?: "",
+                            coverUrl = localPl.coverUrl
+                        )
+                    }
+
                     val items = localPlaylistRepository.getItemsForPlaylistSync(localId)
-                    _songs.value = items.map { item ->
+                    val playlistSongs = items.map { item ->
                         Song(
                             id        = item.id.toString(),
                             bvid      = item.bvid,
@@ -129,12 +146,25 @@ class PlaylistViewModel(
                             partTitle = item.partTitle
                         )
                     }
+                    _songs.value = playlistSongs
+                    _currentPlaylist.value = _currentPlaylist.value?.copy(songCount = playlistSongs.size)
                 } else {
                     // ── B站收藏夹：调网络 API ──
                     val mediaId = playlistId.toLongOrNull() ?: run {
                         _error.value = "无效的收藏夹 ID"
                         return@launch
                     }
+                    
+                    val uid = authManager.uidFlow.firstOrNull()
+                    if (uid != null && uid > 0) {
+                        biliRepository.getCreatedPlaylists(uid).onSuccess { list ->
+                            val pl = list.firstOrNull { it.id == playlistId }
+                            if (pl != null) {
+                                _currentPlaylist.value = pl
+                            }
+                        }
+                    }
+                    
                     fetchPage(mediaId, 1, isAppend = false)
                 }
             } catch (e: Exception) {

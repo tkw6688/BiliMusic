@@ -186,37 +186,35 @@ fun BiliMusicApp(
                 LibraryScreen(
                     libraryViewModel = libraryViewModel,
                     onPlaylistClick = { playlist ->
-                        libraryViewModel.selectPlaylist(playlist)
-                        navController.navigate("playlist")
+                        navController.navigate("playlist/${playlist.id}")
                     },
                 )
             }
-            composable("playlist") {
-                val playlist by libraryViewModel.selectedPlaylist.collectAsState()
-                playlist?.let { pl ->
-                    PlaylistScreen(
-                        playlist = pl,
-                        viewModel = playlistViewModel,
-                        playerState = playerState,
-                        onBack = { navController.popBackStack() },
-                        onSongClick = { song ->
-                            playerViewModel.playSong(song, pl, playlistViewModel.songs.value)
+            composable("playlist/{playlistId}") { backStackEntry ->
+                val playlistId = backStackEntry.arguments?.getString("playlistId") ?: ""
+                val playlist by playlistViewModel.currentPlaylist.collectAsState()
+                PlaylistScreen(
+                    playlistId = playlistId,
+                    viewModel = playlistViewModel,
+                    playerState = playerState,
+                    onBack = { navController.popBackStack() },
+                    onSongClick = { song ->
+                        playerViewModel.playSong(song, playlist, playlistViewModel.songs.value)
+                        showPlayer = true
+                    },
+                    onPlayAll = { songs ->
+                        if (songs.isNotEmpty()) {
+                            playerViewModel.playSong(songs.first(), playlist, songs)
                             showPlayer = true
-                        },
-                        onPlayAll = { songs ->
-                            if (songs.isNotEmpty()) {
-                                playerViewModel.playSong(songs.first(), pl, songs)
-                                showPlayer = true
-                            }
-                        },
-                        onInsertNext = { song -> playerViewModel.insertNext(song) },
-                        onAppendToQueue = { song -> playerViewModel.appendToQueue(song) },
-                        onAddClick = {
-                            val localId = pl.id.removePrefix("local_")
-                            navController.navigate("add_songs/$localId")
                         }
-                    )
-                }
+                    },
+                    onInsertNext = { song -> playerViewModel.insertNext(song) },
+                    onAppendToQueue = { song -> playerViewModel.appendToQueue(song) },
+                    onAddClick = {
+                        val localId = playlistId.removePrefix("local_")
+                        navController.navigate("add_songs/$localId")
+                    }
+                )
             }
             composable("add_songs/{playlistId}") { backStackEntry ->
                 val playlistIdStr = backStackEntry.arguments?.getString("playlistId")
