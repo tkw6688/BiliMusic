@@ -13,6 +13,19 @@ import android.net.Uri
 import java.io.IOException
 import com.thehbc.bilimusic.MainActivity
 import com.thehbc.bilimusic.BiliMusicApp
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
+import androidx.media3.common.util.BitmapLoader
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.BitmapImage
+import coil3.asDrawable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class BiliMediaService : MediaSessionService() {
 
@@ -140,13 +153,7 @@ class BiliMediaService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
             
-        val imageDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-            .setDefaultRequestProperties(mapOf("Referer" to "https://www.bilibili.com/"))
-        val executor = com.google.common.util.concurrent.MoreExecutors.listeningDecorator(
-            java.util.concurrent.Executors.newSingleThreadExecutor()
-        )
-        val underlyingBitmapLoader = androidx.media3.datasource.DataSourceBitmapLoader(executor, imageDataSourceFactory)
+        val underlyingBitmapLoader = CoilBitmapLoader(this)
         val cacheBitmapLoader = androidx.media3.session.CacheBitmapLoader(underlyingBitmapLoader)
 
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
@@ -166,5 +173,70 @@ class BiliMediaService : MediaSessionService() {
             mediaSession = null
         }
         super.onDestroy()
+    }
+}
+
+class CoilBitmapLoader(private val context: android.content.Context) : BitmapLoader {
+    private val scope = CoroutineScope(Dispatchers.IO)
+
+    override fun supportsMimeType(mimeType: String): Boolean {
+        return true
+    }
+
+    override fun decodeBitmap(data: ByteArray): ListenableFuture<Bitmap> {
+        val future = SettableFuture.create<Bitmap>()
+        scope.launch {
+            try {
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size)
+                if (bitmap != null) {
+                    future.set(bitmap)
+                } else {
+                    future.setException(Exception("Decode failed"))
+                }
+            } catch (e: Exception) {
+                future.setException(e)
+            }
+        }
+        return future
+    }
+
+    override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
+        val future = SettableFuture.create<Bitmap>()
+        scope.launch {
+            try {
+                val cleanUrl = com.thehbc.bilimusic.data.utils.BiliTitleParser.cleanCoverUrl(uri.toString()) ?: ""
+                val imageLoader = SingletonImageLoader.get(context)
+                val request = ImageRequest.Builder(context)
+                    .data(cleanUrl)
+                    .build()
+                val result = imageLoader.execute(request)
+                if (result is SuccessResult) {
+                    val image = result.image
+                    val bitmap = (image as? BitmapImage)?.bitmap
+                    if (bitmap != null) {
+                        future.set(bitmap)
+                    } else {
+                        val drawable = image.asDrawable(context.resources)
+                        val bmp = if (drawable is BitmapDrawable) {
+                            drawable.bitmap
+                        } else {
+                            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 1
+                            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 1
+                            val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                            val canvas = android.graphics.Canvas(b)
+                            drawable.setBounds(0, 0, canvas.width, canvas.height)
+                            drawable.draw(canvas)
+                            b
+                        }
+                        future.set(bmp)
+                    }
+                } else {
+                    future.setException(Exception("Coil load failed"))
+                }
+            } catch (e: Exception) {
+                future.setException(e)
+            }
+        }
+        return future
     }
 }

@@ -236,7 +236,7 @@ private fun BiliSongsSelectLayout(
                                                     title = BiliTitleParser.cleanPageTitle(pageItem.part ?: "未知歌曲"),
                                                     artist = media.upper?.name ?: "未知歌手",
                                                     duration = String.format("%02d:%02d", pageItem.duration / 60, pageItem.duration % 60),
-                                                    albumArtUrl = media.cover,
+                                                    albumArtUrl = BiliTitleParser.cleanCoverUrl(media.cover),
                                                     parentTitle = media.title,
                                                     page = pageItem.page,
                                                     partTitle = pageItem.part

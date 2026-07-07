@@ -12,4 +12,17 @@ object BiliTitleParser {
         val title = rawPageTitle.replace(PAGE_PREFIX_REGEX, "")
         return title.trim().removeSurrounding("-").trim().ifEmpty { rawPageTitle }
     }
+
+    fun cleanCoverUrl(url: String?): String? {
+        if (url == null) return null
+        var cleanUrl = url.trim()
+        if (cleanUrl.startsWith("//")) {
+            cleanUrl = "https:$cleanUrl"
+        }
+        val atIndex = cleanUrl.indexOf('@')
+        if (atIndex != -1) {
+            cleanUrl = cleanUrl.substring(0, atIndex)
+        }
+        return cleanUrl
+    }
 }

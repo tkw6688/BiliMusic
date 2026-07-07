@@ -28,6 +28,7 @@ import com.thehbc.bilimusic.service.BiliMediaService
 import com.thehbc.bilimusic.data.local.PlayerPrefsManager
 import com.thehbc.bilimusic.data.local.room.LocalActiveQueueDao
 import com.thehbc.bilimusic.data.local.room.LocalActiveQueueItem
+import com.thehbc.bilimusic.data.utils.BiliTitleParser
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -309,6 +310,8 @@ class PlayerViewModel(
             )
         }
 
+        prefetchSongCovers(currentQ, idx)
+
         if (song.bvid != null && song.cid != null) {
             val fakeUriStr = "bilimusic://play?bvid=${song.bvid}&cid=${song.cid}"
             val artistWithParent = buildString {
@@ -318,10 +321,11 @@ class PlayerViewModel(
                     append(song.parentTitle)
                 }
             }
+            val cleanedArtUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
             val metadata = MediaMetadata.Builder()
                 .setTitle(song.title)
                 .setArtist(artistWithParent)
-                .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
+                .setArtworkUri(if (!cleanedArtUrl.isNullOrEmpty()) Uri.parse(cleanedArtUrl) else null)
                 .build()
 
             val mediaItem = MediaItem.Builder()
@@ -542,12 +546,15 @@ class PlayerViewModel(
             playSong(song, newQueue = cleanQueue)
         } else {
             val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
+            val targetIdx = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
             _state.update {
                 it.copy(
                     queue = cleanQueue,
-                    currentIndex = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
+                    currentIndex = targetIdx
                 )
             }
+            prefetchSongCovers(cleanQueue, targetIdx)
+            prefetchSingleSongCover(song)
         }
     }
 
@@ -572,12 +579,15 @@ class PlayerViewModel(
             playSong(song, newQueue = cleanQueue)
         } else {
             val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
+            val targetIdx = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
             _state.update {
                 it.copy(
                     queue = cleanQueue,
-                    currentIndex = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
+                    currentIndex = targetIdx
                 )
             }
+            prefetchSongCovers(cleanQueue, targetIdx)
+            prefetchSingleSongCover(song)
         }
     }
 
@@ -599,7 +609,7 @@ class PlayerViewModel(
                         title = item.title,
                         artist = item.artist,
                         duration = item.durationStr,
-                        albumArtUrl = item.albumArtUrl,
+                        albumArtUrl = BiliTitleParser.cleanCoverUrl(item.albumArtUrl),
                         parentTitle = item.parentTitle,
                         page = item.page,
                         partTitle = item.partTitle
@@ -620,6 +630,8 @@ class PlayerViewModel(
 
                 val currentSongObj = restoredSongs.firstOrNull { it.id == lastSongId } ?: restoredSongs.firstOrNull()
                 val currentIndexVal = restoredSongs.indexOf(currentSongObj)
+                val songDurationMs = parseDurationStringToMs(currentSongObj?.duration)
+                val initialProgress = if (songDurationMs > 0) lastPos.toFloat() / songDurationMs.toFloat() else 0f
 
                 // 3. 更新 UI 状态
                 _state.update {
@@ -628,6 +640,8 @@ class PlayerViewModel(
                         currentSong = currentSongObj,
                         currentIndex = currentIndexVal,
                         currentPositionMs = lastPos,
+                        durationMs = songDurationMs,
+                        progress = initialProgress,
                         repeatMode = repeatModeObj,
                         isShuffled = lastShuffle
                     )
@@ -651,10 +665,11 @@ class PlayerViewModel(
                                 append(song.parentTitle)
                             }
                         }
+                        val cleanedArtUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
                         val metadata = MediaMetadata.Builder()
                             .setTitle(song.title)
                             .setArtist(artistWithParent)
-                            .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
+                            .setArtworkUri(if (!cleanedArtUrl.isNullOrEmpty()) Uri.parse(cleanedArtUrl) else null)
                             .build()
 
                         MediaItem.Builder()
@@ -675,6 +690,45 @@ class PlayerViewModel(
             } finally {
                 isRestorationComplete = true
             }
+        }
+    }
+
+    private fun parseDurationStringToMs(durationStr: String?): Long {
+        if (durationStr.isNullOrEmpty()) return 0L
+        val parts = durationStr.split(":")
+        if (parts.size == 2) {
+            val minutes = parts[0].toLongOrNull() ?: 0L
+            val seconds = parts[1].toLongOrNull() ?: 0L
+            return (minutes * 60 + seconds) * 1000L
+        }
+        return 0L
+    }
+
+    private fun prefetchSongCovers(songs: List<Song>, startIndex: Int) {
+        val imageLoader = coil3.SingletonImageLoader.get(getApplication())
+        // 预载当前及接下来的2首歌曲封面
+        for (i in 0 until 3) {
+            val index = (startIndex + i) % songs.size
+            if (index in songs.indices) {
+                val song = songs[index]
+                val cleanUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
+                if (!cleanUrl.isNullOrEmpty()) {
+                    val request = coil3.request.ImageRequest.Builder(getApplication())
+                        .data(cleanUrl)
+                        .build()
+                    imageLoader.enqueue(request)
+                }
+            }
+        }
+    }
+    private fun prefetchSingleSongCover(song: Song) {
+        val imageLoader = coil3.SingletonImageLoader.get(getApplication())
+        val cleanUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
+        if (!cleanUrl.isNullOrEmpty()) {
+            val request = coil3.request.ImageRequest.Builder(getApplication())
+                .data(cleanUrl)
+                .build()
+            imageLoader.enqueue(request)
         }
     }
 
