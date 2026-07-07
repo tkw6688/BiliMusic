@@ -207,68 +207,30 @@ private fun BiliSongsSelectLayout(
             isLoadingMore = true
         }
         coroutineScope.launch {
-            try {
-                if (page == 1) {
+            if (page == 1) {
+                try {
                     existingKeys = viewModel.getExistingKeysForPlaylist(playlistId)
+                } catch (e: Exception) {
+                    // ignore
                 }
-
-                val response = viewModel.apiService.getFavResources(
-                    mediaId = folder.id.toLong(),
-                    pageNum = page,
-                    pageSize = 20
-                )
-                if (response.code == 0) {
-                    val medias = response.data?.medias ?: emptyList()
-                    hasMore = response.data?.has_more ?: false
-
-                    val mapped = coroutineScope {
-                        medias.map { media ->
-                            async {
-                                if (media.bvid != null && media.page != null && media.page > 1) {
-                                    try {
-                                        val detailResponse = viewModel.apiService.getVideoDetail(media.bvid)
-                                        if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
-                                            detailResponse.data.pages.map { pageItem ->
-                                                Song(
-                                                    id = "${media.id}_${pageItem.cid}",
-                                                    bvid = media.bvid,
-                                                    cid = pageItem.cid,
-                                                    title = BiliTitleParser.cleanPageTitle(pageItem.part ?: "未知歌曲"),
-                                                    artist = media.upper?.name ?: "未知歌手",
-                                                    duration = String.format("%02d:%02d", pageItem.duration / 60, pageItem.duration % 60),
-                                                    albumArtUrl = BiliTitleParser.cleanCoverUrl(media.cover),
-                                                    parentTitle = media.title,
-                                                    page = pageItem.page,
-                                                    partTitle = pageItem.part
-                                                )
-                                            }
-                                        } else {
-                                            listOf(viewModel.mapToSingleSong(media))
-                                        }
-                                    } catch (e: Exception) {
-                                        listOf(viewModel.mapToSingleSong(media))
-                                    }
-                                } else {
-                                    listOf(viewModel.mapToSingleSong(media))
-                                }
-                            }
-                        }.awaitAll().flatten()
-                    }
-
-                    if (page == 1) {
-                        songs = mapped
-                    } else {
-                        songs = songs + mapped
-                    }
-                } else {
-                    if (page == 1) error = response.message
-                }
-            } catch (e: Exception) {
-                if (page == 1) error = e.message
-            } finally {
-                isLoading = false
-                isLoadingMore = false
             }
+
+            viewModel.biliRepository.getPlaylistSongs(folder.id.toLong(), page, 20)
+                .onSuccess { result ->
+                    hasMore = result.hasMore
+                    if (page == 1) {
+                        songs = result.songs
+                    } else {
+                        songs = songs + result.songs
+                    }
+                }
+                .onFailure { exception ->
+                    if (page == 1) {
+                        error = exception.message ?: "加载失败"
+                    }
+                }
+            isLoading = false
+            isLoadingMore = false
         }
     }
 

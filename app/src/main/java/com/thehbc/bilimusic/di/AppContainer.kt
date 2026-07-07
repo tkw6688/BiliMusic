@@ -53,4 +53,8 @@ class AppContainer(private val context: Context) {
     val localPlaylistRepository: LocalPlaylistRepository by lazy {
         LocalPlaylistRepository(appDatabase.localPlaylistDao())
     }
+
+    val biliRepository: com.thehbc.bilimusic.data.repository.BiliRepository by lazy {
+        com.thehbc.bilimusic.data.repository.BiliRepositoryImpl(biliApiService, authManager)
+    }
 }

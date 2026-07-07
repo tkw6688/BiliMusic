@@ -6,13 +6,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.thehbc.bilimusic.data.local.AuthManager
 import com.thehbc.bilimusic.data.model.Playlist
-import com.thehbc.bilimusic.data.network.api.BiliApiService
+import com.thehbc.bilimusic.data.repository.BiliRepository
 import com.thehbc.bilimusic.data.repository.LocalPlaylistRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class LibraryViewModel(
-    private val apiService: BiliApiService,
+    private val biliRepository: BiliRepository,
     private val authManager: AuthManager,
     private val localPlaylistRepository: LocalPlaylistRepository
 ) : ViewModel() {
@@ -53,28 +53,14 @@ class LibraryViewModel(
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
-            try {
-                val response = apiService.getCreatedFavFolders(upMid = uid)
-                if (response.code == 0) {
-                    val list = response.data?.list?.map { folder ->
-                        Playlist(
-                            id = folder.id.toString(),
-                            name = folder.title ?: "未命名收藏夹",
-                            songCount = folder.media_count ?: 0,
-                            coverColor = Color(0xFFFB7299), // 默认 B 站粉
-                            description = "B站收藏夹",
-                            coverUrl = null // 如果有封面可以接入
-                        )
-                    } ?: emptyList()
+            biliRepository.getCreatedPlaylists(uid)
+                .onSuccess { list ->
                     _playlists.value = list
-                } else {
-                    _error.value = response.message
                 }
-            } catch (e: Exception) {
-                _error.value = "获取收藏夹失败: ${e.message}"
-            } finally {
-                _isLoading.value = false
-            }
+                .onFailure { exception ->
+                    _error.value = exception.message ?: "获取收藏夹失败"
+                }
+            _isLoading.value = false
         }
     }
 
@@ -105,14 +91,14 @@ class LibraryViewModel(
 
     companion object {
         fun provideFactory(
-            apiService: BiliApiService,
+            biliRepository: BiliRepository,
             authManager: AuthManager,
             localPlaylistRepository: LocalPlaylistRepository
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return LibraryViewModel(apiService, authManager, localPlaylistRepository) as T
+                    return LibraryViewModel(biliRepository, authManager, localPlaylistRepository) as T
                 }
             }
     }

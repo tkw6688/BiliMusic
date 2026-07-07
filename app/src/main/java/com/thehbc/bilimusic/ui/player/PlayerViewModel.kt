@@ -23,7 +23,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.thehbc.bilimusic.data.model.Playlist
 import com.thehbc.bilimusic.data.model.Song
-import com.thehbc.bilimusic.data.network.api.BiliApiService
+import com.thehbc.bilimusic.data.repository.BiliRepository
 import com.thehbc.bilimusic.service.BiliMediaService
 import com.thehbc.bilimusic.data.local.PlayerPrefsManager
 import com.thehbc.bilimusic.data.local.room.LocalActiveQueueDao
@@ -67,7 +67,7 @@ data class PlayerState(
  */
 class PlayerViewModel(
     application: Application,
-    private val apiService: BiliApiService,
+    private val biliRepository: BiliRepository,
     private val playerPrefsManager: PlayerPrefsManager,
     private val activeQueueDao: LocalActiveQueueDao
 ) : AndroidViewModel(application) {
@@ -264,9 +264,33 @@ class PlayerViewModel(
         })
     }
 
+    private fun getNextSongInQueue(): Song? {
+        val currentState = _state.value
+        val queue = currentState.queue
+        if (queue.isEmpty() || currentState.currentIndex == -1) return null
+
+        var nextIndex = currentState.currentIndex + 1
+        if (currentState.isShuffled) {
+            return null // 随机播放下暂不预加载，点击下一首时直接随机挑选
+        } else if (nextIndex >= queue.size) {
+            if (currentState.repeatMode == RepeatMode.ALL) {
+                nextIndex = 0
+            } else {
+                return null
+            }
+        }
+
+        if (currentState.repeatMode == RepeatMode.ONE) {
+            nextIndex = currentState.currentIndex
+        }
+
+        return if (nextIndex in queue.indices) queue[nextIndex] else null
+    }
+
     private fun startProgressTracker() {
         viewModelScope.launch {
             var ticks = 0
+            var lastPrefetchedSongId: String? = null
             while (true) {
                 delay(100)
                 mediaController?.let { player ->
@@ -281,6 +305,21 @@ class PlayerViewModel(
                                     durationMs = dur,
                                 ) 
                             }
+
+                            // 预解析下一首歌曲的播放流 URL (剩余 15 秒以内时触发)
+                            val remaining = dur - pos
+                            if (remaining < 15000) {
+                                val nextSong = getNextSongInQueue()
+                                if (nextSong != null && nextSong.id != lastPrefetchedSongId) {
+                                    lastPrefetchedSongId = nextSong.id
+                                    viewModelScope.launch {
+                                        if (nextSong.bvid != null && nextSong.cid != null) {
+                                            biliRepository.prefetchPlayUrl(nextSong.bvid, nextSong.cid)
+                                        }
+                                    }
+                                }
+                            }
+
                             ticks++
                             if (ticks >= 50) {
                                 ticks = 0
@@ -779,14 +818,14 @@ class PlayerViewModel(
     companion object {
         fun provideFactory(
             application: Application,
-            apiService: BiliApiService,
+            biliRepository: BiliRepository,
             playerPrefsManager: PlayerPrefsManager,
             activeQueueDao: LocalActiveQueueDao
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return PlayerViewModel(application, apiService, playerPrefsManager, activeQueueDao) as T
+                    return PlayerViewModel(application, biliRepository, playerPrefsManager, activeQueueDao) as T
                 }
             }
     }

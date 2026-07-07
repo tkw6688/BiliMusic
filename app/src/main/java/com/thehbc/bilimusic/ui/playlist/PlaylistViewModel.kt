@@ -4,9 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.thehbc.bilimusic.data.model.Song
-import com.thehbc.bilimusic.data.network.api.BiliApiService
-import com.thehbc.bilimusic.data.network.model.FavMedia
+import com.thehbc.bilimusic.data.repository.BiliRepository
 import com.thehbc.bilimusic.data.repository.LocalPlaylistRepository
+import com.thehbc.bilimusic.data.network.model.VideoDetailResponse
 import com.thehbc.bilimusic.data.utils.BiliTitleParser
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
 class PlaylistViewModel(
-    val apiService: BiliApiService,
+    val biliRepository: BiliRepository,
     private val localPlaylistRepository: LocalPlaylistRepository,
     private val authManager: com.thehbc.bilimusic.data.local.AuthManager
 ) : ViewModel() {
@@ -163,65 +163,22 @@ class PlaylistViewModel(
     }
 
     private suspend fun fetchPage(mediaId: Long, pageNum: Int, isAppend: Boolean) {
-        val response = apiService.getFavResources(
-            mediaId  = mediaId,
-            pageNum  = pageNum,
-            pageSize = 20
-        )
-        if (response.code == 0) {
-            hasMore = response.data?.has_more ?: false
-            currentPage = pageNum
-            val medias = response.data?.medias ?: emptyList()
-            val newSongs = coroutineScope {
-                medias.map { media ->
-                    async {
-                        if (media.bvid != null && media.page != null && media.page > 1) {
-                            try {
-                                val detailResponse = apiService.getVideoDetail(media.bvid)
-                                if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
-                                    val cleanVideoTitle = media.title ?: ""
-                                    val uploader = media.upper?.name ?: "未知歌手"
-                                    detailResponse.data.pages.map { page ->
-                                        val durationSeconds = page.duration
-                                        val minutes = durationSeconds / 60
-                                        val seconds = durationSeconds % 60
-                                        val cleanPageTitle = BiliTitleParser.cleanPageTitle(page.part ?: "未知歌曲")
-                                        Song(
-                                            id          = "${media.id}_${page.cid}",
-                                            bvid        = media.bvid,
-                                            cid         = page.cid,
-                                            title       = cleanPageTitle,
-                                            artist      = uploader,
-                                            duration    = String.format("%02d:%02d", minutes, seconds),
-                                            albumArtUrl = BiliTitleParser.cleanCoverUrl(media.cover),
-                                            mediaUri    = null,
-                                            parentTitle = cleanVideoTitle,
-                                            page        = page.page,
-                                            partTitle   = page.part
-                                        )
-                                    }
-                                } else {
-                                    listOf(mapToSingleSong(media))
-                                }
-                            } catch (e: Exception) {
-                                listOf(mapToSingleSong(media))
-                            }
-                        } else {
-                            listOf(mapToSingleSong(media))
-                        }
-                    }
-                }.awaitAll().flatten()
+        biliRepository.getPlaylistSongs(mediaId, pageNum, 20)
+            .onSuccess { result ->
+                hasMore = result.hasMore
+                currentPage = pageNum
+                val newSongs = result.songs
+                if (isAppend) {
+                    _songs.value = _songs.value + newSongs
+                } else {
+                    _songs.value = newSongs
+                }
             }
-            if (isAppend) {
-                _songs.value = _songs.value + newSongs
-            } else {
-                _songs.value = newSongs
+            .onFailure { exception ->
+                if (!isAppend) {
+                    _error.value = exception.message ?: "加载歌曲失败"
+                }
             }
-        } else {
-            if (!isAppend) {
-                _error.value = response.message
-            }
-        }
     }
 
     fun getPlaylistSongsFull(playlistId: String, currentSongs: List<Song>, onComplete: (List<Song>) -> Unit) {
@@ -240,65 +197,22 @@ class PlaylistViewModel(
                 var page = currentPage + 1
                 var more = true
                 while (more) {
-                    val response = apiService.getFavResources(
-                        mediaId  = mediaId,
-                        pageNum  = page,
-                        pageSize = 20
-                    )
-                    if (response.code == 0) {
-                        more = response.data?.has_more ?: false
-                        val medias = response.data?.medias ?: emptyList()
-                        val pageSongs = coroutineScope {
-                            medias.map { media ->
-                                async {
-                                    if (media.bvid != null && media.page != null && media.page > 1) {
-                                        try {
-                                            val detailResponse = apiService.getVideoDetail(media.bvid)
-                                            if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
-                                                val cleanVideoTitle = media.title ?: ""
-                                                val uploader = media.upper?.name ?: "未知歌手"
-                                                detailResponse.data.pages.map { pageItem ->
-                                                    val durationSeconds = pageItem.duration
-                                                    val minutes = durationSeconds / 60
-                                                    val seconds = durationSeconds % 60
-                                                    val cleanPageTitle = BiliTitleParser.cleanPageTitle(pageItem.part ?: "未知歌曲")
-                                                    Song(
-                                                        id          = "${media.id}_${pageItem.cid}",
-                                                        bvid        = media.bvid,
-                                                        cid         = pageItem.cid,
-                                                        title       = cleanPageTitle,
-                                                        artist      = uploader,
-                                                        duration    = String.format("%02d:%02d", minutes, seconds),
-                                                       albumArtUrl = BiliTitleParser.cleanCoverUrl(media.cover),
-                                                        mediaUri    = null,
-                                                        parentTitle = cleanVideoTitle,
-                                                        page        = pageItem.page,
-                                                        partTitle   = pageItem.part
-                                                    )
-                                                }
-                                            } else {
-                                                listOf(mapToSingleSong(media))
-                                            }
-                                        } catch (e: Exception) {
-                                            listOf(mapToSingleSong(media))
-                                        }
-                                    } else {
-                                        listOf(mapToSingleSong(media))
-                                    }
-                                }
-                            }.awaitAll().flatten()
-                        }
-                        fullList.addAll(pageSongs)
+                    val result = biliRepository.getPlaylistSongs(mediaId, page, 20)
+                    if (result.isSuccess) {
+                        val favSongsResult = result.getOrThrow()
+                        more = favSongsResult.hasMore
+                        fullList.addAll(favSongsResult.songs)
                         page++
                     } else {
                         more = false
                     }
                 }
-                
                 _songs.value = fullList
                 currentPage = page - 1
                 hasMore = false
                 onComplete(fullList)
+            } catch (e: Exception) {
+                // ignore
             } finally {
                 _isLoadingMore.value = false
             }
@@ -308,22 +222,10 @@ class PlaylistViewModel(
     fun loadBiliPlaylists() {
         viewModelScope.launch {
             val uid = authManager.uidFlow.firstOrNull() ?: return@launch
-            try {
-                val response = apiService.getCreatedFavFolders(upMid = uid)
-                if (response.code == 0) {
-                    _biliPlaylists.value = response.data?.list?.map { folder ->
-                        com.thehbc.bilimusic.data.model.Playlist(
-                            id = folder.id.toString(),
-                            name = folder.title ?: "未命名收藏夹",
-                            songCount = folder.media_count ?: 0,
-                            coverColor = androidx.compose.ui.graphics.Color(0xFFFB7299),
-                            description = "B站收藏夹"
-                        )
-                    } ?: emptyList()
+            biliRepository.getCreatedPlaylists(uid)
+                .onSuccess { playlists ->
+                    _biliPlaylists.value = playlists
                 }
-            } catch (e: Exception) {
-                // ignore
-            }
         }
     }
 
@@ -334,10 +236,13 @@ class PlaylistViewModel(
         onError: (String) -> Unit
     ) {
         viewModelScope.launch {
-            try {
-                val response = apiService.getVideoDetail(bvid)
-                if (response.code == 0 && response.data != null) {
+            biliRepository.getVideoDetail(bvid)
+                .onSuccess { response ->
                     val data = response.data
+                    if (data == null) {
+                        onError("视频数据为空")
+                        return@onSuccess
+                    }
                     val uploader = data.owner?.name ?: "未知歌手"
                     val title = data.title ?: "未知歌曲"
                     val cover = data.pic
@@ -379,23 +284,21 @@ class PlaylistViewModel(
                             )
                         )
                     }
-                    val nonDuplicateItems = itemsToAdd.filter { item ->
+                    val filteredItems = itemsToAdd.filter { item ->
                         val key = "${item.bvid}_${item.cid}"
                         !existingKeys.contains(key)
                     }
-                    if (nonDuplicateItems.isNotEmpty()) {
-                        localPlaylistRepository.addItemsToPlaylist(playlistId, nonDuplicateItems)
+                    if (filteredItems.isNotEmpty()) {
+                        localPlaylistRepository.addItemsToPlaylist(playlistId, filteredItems)
                     }
                     if (currentPlaylistId == "local_$playlistId") {
                         loadPlaylist("local_$playlistId")
                     }
                     onSuccess()
-                } else {
-                    onError(response.message)
                 }
-            } catch (e: Exception) {
-                onError("获取视频信息失败: ${e.message}")
-            }
+                .onFailure { exception ->
+                    onError(exception.message ?: "添加失败")
+                }
         }
     }
 
@@ -405,35 +308,17 @@ class PlaylistViewModel(
             .toSet()
     }
 
-    fun mapToSingleSong(media: FavMedia): Song {
-        val durationSeconds = media.duration ?: 0
-        val minutes = durationSeconds / 60
-        val seconds = durationSeconds % 60
-        return Song(
-            id          = media.id.toString(),
-            bvid        = media.bvid,
-            cid         = media.ugc?.first_cid,
-            title       = media.title ?: "未知歌曲",
-            artist      = media.upper?.name ?: "未知歌手",
-            duration    = String.format("%02d:%02d", minutes, seconds),
-            albumArtUrl = BiliTitleParser.cleanCoverUrl(media.cover),
-            mediaUri    = null,
-            parentTitle = null,
-            page        = 1,
-            partTitle   = media.title
-        )
-    }
 
     companion object {
         fun provideFactory(
-            apiService: BiliApiService,
+            biliRepository: BiliRepository,
             localPlaylistRepository: LocalPlaylistRepository,
             authManager: com.thehbc.bilimusic.data.local.AuthManager
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    PlaylistViewModel(apiService, localPlaylistRepository, authManager) as T
+                    PlaylistViewModel(biliRepository, localPlaylistRepository, authManager) as T
             }
     }
 }
