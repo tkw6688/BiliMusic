@@ -409,7 +409,8 @@ class PlayerViewModel(
     }
 
     fun playSong(song: Song, playlist: Playlist? = null, newQueue: List<Song>? = null) {
-        val currentQ = newQueue ?: _state.value.queue
+        val previousQueue = _state.value.queue
+        val currentQ = newQueue ?: previousQueue
         var idx = currentQ.indexOfFirst { it.id == song.id }
         if (idx == -1 && currentQ.isEmpty()) {
             idx = 0
@@ -417,7 +418,7 @@ class PlayerViewModel(
         if (idx == -1) return
 
         if (song.id == _state.value.currentSong?.id) {
-            if (newQueue != null && newQueue != _state.value.queue) {
+            if (newQueue != null && newQueue != previousQueue) {
                 val mediaItems = newQueue.map { it.toMediaItem() }
                 mediaController?.setMediaItems(mediaItems, idx, mediaController?.currentPosition ?: 0L)
                 _state.update { it.copy(queue = newQueue, currentPlaylist = playlist ?: it.currentPlaylist) }
@@ -455,7 +456,7 @@ class PlayerViewModel(
 
         val controller = mediaController ?: return
         val isPlayerQueueEmpty = controller.mediaItemCount == 0
-        val isQueueChanged = newQueue != null && newQueue != _state.value.queue
+        val isQueueChanged = newQueue != null && newQueue != previousQueue
         
         if (isPlayerQueueEmpty || isQueueChanged) {
             val mediaItems = currentQ.map { it.toMediaItem() }
