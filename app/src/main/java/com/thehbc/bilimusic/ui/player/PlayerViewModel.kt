@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -78,19 +79,70 @@ class PlayerViewModel(
     private val _errorEvent = MutableSharedFlow<String>()
     val errorEvent: SharedFlow<String> = _errorEvent.asSharedFlow()
 
+    private fun Song.toMediaItem(): MediaItem {
+        val fakeUriStr = if (bvid != null && cid != null) {
+            "bilimusic://play?bvid=${bvid}&cid=${cid}"
+        } else {
+            mediaUri ?: ""
+        }
+        val artistWithParent = buildString {
+            append(artist)
+            if (!parentTitle.isNullOrEmpty()) {
+                append(" · ")
+                append(parentTitle)
+            }
+        }
+        val cleanedArtUrl = BiliTitleParser.cleanCoverUrl(albumArtUrl)
+        
+        val extras = android.os.Bundle().apply {
+            putString("bvid", bvid)
+            cid?.let { putLong("cid", it) }
+            putString("parentTitle", parentTitle)
+            page?.let { putInt("page", it) }
+            putString("partTitle", partTitle)
+            putString("duration", duration)
+            putString("albumArtUrl", albumArtUrl)
+            putString("artist", artist)
+        }
+
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(artistWithParent)
+            .setArtworkUri(if (!cleanedArtUrl.isNullOrEmpty()) Uri.parse(cleanedArtUrl) else null)
+            .setExtras(extras)
+            .build()
+
+        return MediaItem.Builder()
+            .setMediaId(id)
+            .setUri(Uri.parse(fakeUriStr))
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
+    private fun MediaItem.toSong(): Song {
+        val extras = mediaMetadata.extras
+        val artistWithParent = mediaMetadata.artist?.toString() ?: ""
+        val rawArtist = extras?.getString("artist") ?: artistWithParent.substringBefore(" · ")
+        
+        return Song(
+            id = mediaId,
+            title = mediaMetadata.title?.toString() ?: "未知歌曲",
+            artist = rawArtist,
+            duration = extras?.getString("duration") ?: "00:00",
+            albumArtUrl = extras?.getString("albumArtUrl") ?: mediaMetadata.artworkUri?.toString(),
+            mediaUri = localConfiguration?.uri?.toString(),
+            bvid = extras?.getString("bvid"),
+            cid = if (extras?.containsKey("cid") == true) extras.getLong("cid") else null,
+            parentTitle = extras?.getString("parentTitle"),
+            page = if (extras?.containsKey("page") == true) extras.getInt("page") else null,
+            partTitle = extras?.getString("partTitle")
+        )
+    }
+
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var mediaController: MediaController? = null
     
     private var isRestorationComplete = false
-
-    private val mediaCommandReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                "com.thehbc.bilimusic.ACTION_SKIP_NEXT" -> skipNext(isAutoAdvance = false)
-                "com.thehbc.bilimusic.ACTION_SKIP_PREVIOUS" -> skipPrevious()
-            }
-        }
-    }
 
     init {
         initializeController()
@@ -155,17 +207,6 @@ class PlayerViewModel(
                 }
             }
         }
-        
-        val filter = IntentFilter().apply {
-            addAction("com.thehbc.bilimusic.ACTION_SKIP_NEXT")
-            addAction("com.thehbc.bilimusic.ACTION_SKIP_PREVIOUS")
-        }
-        ContextCompat.registerReceiver(
-            getApplication(),
-            mediaCommandReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
     }
 
     private fun initializeController() {
@@ -184,35 +225,74 @@ class PlayerViewModel(
         )
     }
 
+    private fun syncQueueFromPlayer() {
+        val controller = mediaController ?: return
+        val count = controller.mediaItemCount
+        val newQueue = ArrayList<Song>(count)
+        for (i in 0 until count) {
+            val item = controller.getMediaItemAt(i)
+            newQueue.add(item.toSong())
+        }
+        val currentIdx = controller.currentMediaItemIndex
+        val currentSong = if (currentIdx in newQueue.indices) newQueue[currentIdx] else null
+        _state.update {
+            it.copy(
+                queue = newQueue,
+                currentIndex = currentIdx,
+                currentSong = currentSong ?: it.currentSong
+            )
+        }
+    }
+
     private fun setupPlayerListener() {
         mediaController?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _state.update { it.copy(isPlaying = isPlaying) }
             }
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    skipNext(isAutoAdvance = true)
-                }
-            }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && mediaItem != null) {
-                    val songId = mediaItem.mediaId
-                    val matchedSong = _state.value.queue.firstOrNull { it.id == songId }
-                    if (matchedSong != null) {
-                        val idx = _state.value.queue.indexOf(matchedSong)
-                        _state.update {
-                            it.copy(
-                                currentSong = matchedSong,
-                                currentIndex = idx,
-                                progress = 0f,
-                                currentPositionMs = 0L,
-                                durationMs = parseDurationStringToMs(matchedSong.duration),
-                                audioBitrate = null,
-                                audioCodec = null
-                            )
-                        }
+                val controller = mediaController ?: return
+                if (mediaItem != null) {
+                    val song = mediaItem.toSong()
+                    val idx = controller.currentMediaItemIndex
+                    val currentPos = controller.currentPosition
+                    val duration = controller.duration.takeIf { d -> d > 0 } ?: parseDurationStringToMs(song.duration)
+                    val progressVal = if (duration > 0) currentPos.toFloat() / duration.toFloat() else 0f
+                    _state.update {
+                        it.copy(
+                            currentSong = song,
+                            currentIndex = idx,
+                            progress = progressVal,
+                            currentPositionMs = currentPos,
+                            durationMs = duration,
+                            audioBitrate = null,
+                            audioCodec = null
+                        )
+                    }
+                } else {
+                    _state.update {
+                        it.copy(
+                            currentSong = null,
+                            currentIndex = -1,
+                            progress = 0f,
+                            currentPositionMs = 0L,
+                            durationMs = 0L
+                        )
                     }
                 }
+            }
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                syncQueueFromPlayer()
+            }
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                val modeObj = when (repeatMode) {
+                    Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+                    Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+                    else -> RepeatMode.OFF
+                }
+                _state.update { it.copy(repeatMode = modeObj) }
+            }
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                _state.update { it.copy(isShuffled = shuffleModeEnabled) }
             }
             override fun onTracksChanged(tracks: Tracks) {
                 var sampleRate: Int? = null
@@ -265,26 +345,13 @@ class PlayerViewModel(
     }
 
     private fun getNextSongInQueue(): Song? {
-        val currentState = _state.value
-        val queue = currentState.queue
-        if (queue.isEmpty() || currentState.currentIndex == -1) return null
-
-        var nextIndex = currentState.currentIndex + 1
-        if (currentState.isShuffled) {
-            return null // 随机播放下暂不预加载，点击下一首时直接随机挑选
-        } else if (nextIndex >= queue.size) {
-            if (currentState.repeatMode == RepeatMode.ALL) {
-                nextIndex = 0
-            } else {
-                return null
-            }
+        val controller = mediaController ?: return null
+        if (controller.shuffleModeEnabled) return null
+        val nextIdx = controller.currentMediaItemIndex + 1
+        if (nextIdx in 0 until controller.mediaItemCount) {
+            return controller.getMediaItemAt(nextIdx).toSong()
         }
-
-        if (currentState.repeatMode == RepeatMode.ONE) {
-            nextIndex = currentState.currentIndex
-        }
-
-        return if (nextIndex in queue.indices) queue[nextIndex] else null
+        return null
     }
 
     private fun startProgressTracker() {
@@ -343,24 +410,21 @@ class PlayerViewModel(
 
     fun playSong(song: Song, playlist: Playlist? = null, newQueue: List<Song>? = null) {
         val currentQ = newQueue ?: _state.value.queue
-        if (song.id == _state.value.currentSong?.id) {
-            // 如果是同一首歌，仅仅更新队列，不要重新加载
-            if (newQueue != null && newQueue != _state.value.queue) {
-                _state.update { it.copy(queue = newQueue, currentPlaylist = playlist ?: it.currentPlaylist) }
-            }
-            return
-        }
         var idx = currentQ.indexOfFirst { it.id == song.id }
         if (idx == -1 && currentQ.isEmpty()) {
             idx = 0
         }
-        
         if (idx == -1) return
 
-        // 立即停止当前播放，防止拉取新流时还在播放上一首
-        mediaController?.stop()
-        mediaController?.clearMediaItems()
-        
+        if (song.id == _state.value.currentSong?.id) {
+            if (newQueue != null && newQueue != _state.value.queue) {
+                val mediaItems = newQueue.map { it.toMediaItem() }
+                mediaController?.setMediaItems(mediaItems, idx, mediaController?.currentPosition ?: 0L)
+                _state.update { it.copy(queue = newQueue, currentPlaylist = playlist ?: it.currentPlaylist) }
+            }
+            return
+        }
+
         // 显式启动前台服务，以保持前台状态
         try {
             val serviceIntent = Intent(getApplication(), BiliMediaService::class.java)
@@ -378,7 +442,7 @@ class PlayerViewModel(
             it.copy(
                 currentSong = song,
                 currentPlaylist = playlist ?: it.currentPlaylist,
-                isPlaying = false, // 等待 player 真实起播
+                isPlaying = false,
                 progress = 0f,
                 currentPositionMs = 0L,
                 durationMs = 0L,
@@ -389,50 +453,26 @@ class PlayerViewModel(
 
         prefetchSongCovers(currentQ, idx)
 
-        if (song.bvid != null && song.cid != null) {
-            val fakeUriStr = "bilimusic://play?bvid=${song.bvid}&cid=${song.cid}"
-            val artistWithParent = buildString {
-                append(song.artist)
-                if (!song.parentTitle.isNullOrEmpty()) {
-                    append(" · ")
-                    append(song.parentTitle)
-                }
-            }
-            val cleanedArtUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
-            val metadata = MediaMetadata.Builder()
-                .setTitle(song.title)
-                .setArtist(artistWithParent)
-                .setArtworkUri(if (!cleanedArtUrl.isNullOrEmpty()) Uri.parse(cleanedArtUrl) else null)
-                .build()
-
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(song.id)
-                .setUri(Uri.parse(fakeUriStr))
-                .setMediaMetadata(metadata)
-                .build()
-
-            mediaController?.setMediaItem(mediaItem)
-            mediaController?.prepare()
-            mediaController?.play()
-            
-            // 清除之前的音频规格，等待 ExoPlayer TracksChanged 自动上报
-            _state.update {
-                it.copy(
-                    audioBitrate = null,
-                    audioCodec = null,
-                    currentSong = song.copy(mediaUri = fakeUriStr)
-                )
-            }
-        } else if (song.mediaUri != null) {
-            // 回退到假数据（如果有）
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(song.id)
-                .setUri(Uri.parse(song.mediaUri))
-                .build()
-
-            mediaController?.setMediaItem(mediaItem)
-            mediaController?.prepare()
-            mediaController?.play()
+        val controller = mediaController ?: return
+        val isPlayerQueueEmpty = controller.mediaItemCount == 0
+        val isQueueChanged = newQueue != null && newQueue != _state.value.queue
+        
+        if (isPlayerQueueEmpty || isQueueChanged) {
+            val mediaItems = currentQ.map { it.toMediaItem() }
+            controller.setMediaItems(mediaItems, idx, 0L)
+            controller.prepare()
+            controller.play()
+        } else {
+            controller.seekTo(idx, 0L)
+            controller.play()
+        }
+        
+        // 清除之前的音频规格，等待 ExoPlayer TracksChanged 自动上报
+        _state.update {
+            it.copy(
+                audioBitrate = null,
+                audioCodec = null
+            )
         }
     }
 
@@ -477,95 +517,54 @@ class PlayerViewModel(
     }
 
     fun cyclePlayMode() {
-        _state.update {
-            if (!it.isShuffled && it.repeatMode == RepeatMode.OFF) {
-                // Sequential -> Loop All
-                it.copy(repeatMode = RepeatMode.ALL, isShuffled = false)
-            } else if (!it.isShuffled && it.repeatMode == RepeatMode.ALL) {
-                // Loop All -> Loop One
-                it.copy(repeatMode = RepeatMode.ONE, isShuffled = false)
-            } else if (!it.isShuffled && it.repeatMode == RepeatMode.ONE) {
-                // Loop One -> Shuffle
-                it.copy(repeatMode = RepeatMode.ALL, isShuffled = true)
-            } else {
-                // Shuffle -> Sequential
-                it.copy(repeatMode = RepeatMode.OFF, isShuffled = false)
-            }
+        val controller = mediaController ?: return
+        val currentState = _state.value
+        val nextState = if (!currentState.isShuffled && currentState.repeatMode == RepeatMode.OFF) {
+            Pair(Player.REPEAT_MODE_ALL, false)
+        } else if (!currentState.isShuffled && currentState.repeatMode == RepeatMode.ALL) {
+            Pair(Player.REPEAT_MODE_ONE, false)
+        } else if (!currentState.isShuffled && currentState.repeatMode == RepeatMode.ONE) {
+            Pair(Player.REPEAT_MODE_ALL, true)
+        } else {
+            Pair(Player.REPEAT_MODE_OFF, false)
         }
+        
+        controller.repeatMode = nextState.first
+        controller.shuffleModeEnabled = nextState.second
     }
 
     fun skipNext(isAutoAdvance: Boolean = false) {
-        val currentState = _state.value
-        val queue = currentState.queue
-        if (queue.isEmpty()) return
-
-        var nextIndex = currentState.currentIndex + 1
-        
-        if (currentState.isShuffled) {
-            nextIndex = queue.indices.random()
-        } else if (nextIndex >= queue.size) {
-            if (currentState.repeatMode == RepeatMode.ALL || !isAutoAdvance) {
-                nextIndex = 0 // 回到第一首
-            } else if (currentState.repeatMode == RepeatMode.OFF && isAutoAdvance) {
-                // 播完了整个列表，且不循环
-                mediaController?.stop()
-                return
+        mediaController?.let { controller ->
+            if (controller.hasNextMediaItem()) {
+                controller.seekToNext()
+            } else {
+                if (!controller.hasNextMediaItem() && _state.value.repeatMode != RepeatMode.ALL && !isAutoAdvance) {
+                    controller.seekTo(0, 0L)
+                } else {
+                    controller.seekToNext()
+                }
             }
-        }
-        
-        if (currentState.repeatMode == RepeatMode.ONE && isAutoAdvance) {
-            nextIndex = currentState.currentIndex // 单曲循环
-        }
-
-        if (nextIndex in queue.indices) {
-            playSong(queue[nextIndex])
         }
     }
 
     fun skipPrevious() {
-        val currentState = _state.value
-        val queue = currentState.queue
-        if (queue.isEmpty()) return
-
-        var prevIndex = currentState.currentIndex - 1
-        
-        if (currentState.isShuffled) {
-            prevIndex = queue.indices.random()
-        } else if (prevIndex < 0) {
-            prevIndex = queue.size - 1
-        }
-
-        if (prevIndex in queue.indices) {
-            playSong(queue[prevIndex])
+        mediaController?.let { controller ->
+            if (controller.hasPreviousMediaItem()) {
+                controller.seekToPrevious()
+            } else {
+                val count = controller.mediaItemCount
+                if (count > 0) {
+                    controller.seekTo(count - 1, 0L)
+                }
+            }
         }
     }
 
     fun removeSong(index: Int) {
-        val currentState = _state.value
-        val queue = currentState.queue
-        if (index !in queue.indices) return
-
-        val newQueue = queue.toMutableList()
-        newQueue.removeAt(index)
-
-        var newCurrentIndex = currentState.currentIndex
-        if (index < newCurrentIndex) {
-            newCurrentIndex--
-        } else if (index == newCurrentIndex) {
-            if (newQueue.isEmpty()) {
-                mediaController?.stop()
-                _state.update { it.copy(queue = emptyList(), currentSong = null, isPlaying = false, progress = 0f, currentPositionMs = 0L, currentIndex = -1) }
-                return
-            } else {
-                if (newCurrentIndex >= newQueue.size) {
-                    newCurrentIndex = 0
-                }
-                playSong(newQueue[newCurrentIndex], newQueue = newQueue)
-                return
-            }
+        val controller = mediaController ?: return
+        if (index in 0 until controller.mediaItemCount) {
+            controller.removeMediaItem(index)
         }
-
-        _state.update { it.copy(queue = newQueue, currentIndex = newCurrentIndex) }
     }
 
     fun removeSongById(songId: String) {
@@ -574,96 +573,55 @@ class PlayerViewModel(
     }
 
     fun moveSong(fromIndex: Int, toIndex: Int) {
-        val currentState = _state.value
-        val queue = currentState.queue
-        if (fromIndex !in queue.indices) return
-
-        val targetIndex = normalizeMoveTargetIndex(
-            itemCount = queue.size,
-            requestedToIndex = toIndex
-        )
-        val newQueue = reorderQueue(
-            queue = queue,
-            fromIndex = fromIndex,
-            requestedToIndex = targetIndex
-        )
-        if (newQueue == queue) return
-
-        var newCurrentIndex = currentState.currentIndex
-        if (fromIndex == newCurrentIndex) {
-            newCurrentIndex = targetIndex
-        } else if (fromIndex < newCurrentIndex && targetIndex >= newCurrentIndex) {
-            newCurrentIndex--
-        } else if (fromIndex > newCurrentIndex && targetIndex <= newCurrentIndex) {
-            newCurrentIndex++
+        val controller = mediaController ?: return
+        val count = controller.mediaItemCount
+        if (fromIndex in 0 until count && toIndex in 0 until count) {
+            controller.moveMediaItem(fromIndex, toIndex)
         }
-
-        _state.update { it.copy(queue = newQueue, currentIndex = newCurrentIndex) }
     }
 
     fun insertNext(song: Song) {
-        val currentState = _state.value
-        val queue = currentState.queue
+        val controller = mediaController ?: return
+        val queue = _state.value.queue
+        val oldIndex = queue.indexOfFirst { it.id == song.id }
+        val currentIdx = controller.currentMediaItemIndex
         
-        val cleanQueue = queue.toMutableList()
-        val oldIndex = cleanQueue.indexOfFirst { it.id == song.id }
-        
-        var currentIndex = currentState.currentIndex
         if (oldIndex != -1) {
-            cleanQueue.removeAt(oldIndex)
-            if (oldIndex < currentIndex) {
-                currentIndex--
-            }
+            if (oldIndex == currentIdx) return
+            controller.removeMediaItem(oldIndex)
         }
         
-        val insertIndex = if (cleanQueue.isEmpty()) 0 else (currentIndex + 1)
-        cleanQueue.add(insertIndex, song)
+        val insertIndex = if (controller.mediaItemCount == 0) 0 else (currentIdx + 1)
+        controller.addMediaItem(insertIndex, song.toMediaItem())
         
-        if (currentState.currentSong == null) {
-            playSong(song, newQueue = cleanQueue)
+        if (controller.currentMediaItem == null) {
+            controller.prepare()
+            controller.play()
         } else {
-            val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
-            val targetIdx = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
-            _state.update {
-                it.copy(
-                    queue = cleanQueue,
-                    currentIndex = targetIdx
-                )
-            }
-            prefetchSongCovers(cleanQueue, targetIdx)
             prefetchSingleSongCover(song)
         }
     }
 
     fun appendToQueue(song: Song) {
-        val currentState = _state.value
-        val queue = currentState.queue
+        val controller = mediaController ?: return
+        val queue = _state.value.queue
+        val oldIndex = queue.indexOfFirst { it.id == song.id }
         
-        val cleanQueue = queue.toMutableList()
-        val oldIndex = cleanQueue.indexOfFirst { it.id == song.id }
-        
-        var currentIndex = currentState.currentIndex
         if (oldIndex != -1) {
-            cleanQueue.removeAt(oldIndex)
-            if (oldIndex < currentIndex) {
-                currentIndex--
+            if (oldIndex == controller.currentMediaItemIndex) {
+                controller.moveMediaItem(oldIndex, controller.mediaItemCount - 1)
+            } else {
+                controller.removeMediaItem(oldIndex)
+                controller.addMediaItem(song.toMediaItem())
             }
+        } else {
+            controller.addMediaItem(song.toMediaItem())
         }
         
-        cleanQueue.add(song)
-        
-        if (currentState.currentSong == null) {
-            playSong(song, newQueue = cleanQueue)
+        if (controller.currentMediaItem == null) {
+            controller.prepare()
+            controller.play()
         } else {
-            val newCurrentIndex = cleanQueue.indexOfFirst { it.id == (currentState.currentSong?.id ?: "") }
-            val targetIdx = if (newCurrentIndex != -1) newCurrentIndex else currentIndex
-            _state.update {
-                it.copy(
-                    queue = cleanQueue,
-                    currentIndex = targetIdx
-                )
-            }
-            prefetchSongCovers(cleanQueue, targetIdx)
             prefetchSingleSongCover(song)
         }
     }
@@ -724,37 +682,17 @@ class PlayerViewModel(
                     )
                 }
 
-                // 4. 将队列设置到 ExoPlayer 中，但不自动播放
+                // 4. 将队列及状态设置到 ExoPlayer 中，但不自动播放
                 mediaController?.let { player ->
-                    player.clearMediaItems()
-                    
-                    val mediaItems = restoredSongs.map { song ->
-                        val fakeUriStr = if (song.bvid != null && song.cid != null) {
-                            "bilimusic://play?bvid=${song.bvid}&cid=${song.cid}"
-                        } else {
-                            song.mediaUri ?: ""
-                        }
-                        
-                        val artistWithParent = buildString {
-                            append(song.artist)
-                            if (!song.parentTitle.isNullOrEmpty()) {
-                                append(" · ")
-                                append(song.parentTitle)
-                            }
-                        }
-                        val cleanedArtUrl = BiliTitleParser.cleanCoverUrl(song.albumArtUrl)
-                        val metadata = MediaMetadata.Builder()
-                            .setTitle(song.title)
-                            .setArtist(artistWithParent)
-                            .setArtworkUri(if (!cleanedArtUrl.isNullOrEmpty()) Uri.parse(cleanedArtUrl) else null)
-                            .build()
-
-                        MediaItem.Builder()
-                            .setMediaId(song.id)
-                            .setUri(Uri.parse(fakeUriStr))
-                            .setMediaMetadata(metadata)
-                            .build()
+                    player.repeatMode = when (repeatModeObj) {
+                        RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+                        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                        else -> Player.REPEAT_MODE_OFF
                     }
+                    player.shuffleModeEnabled = lastShuffle
+                    
+                    player.clearMediaItems()
+                    val mediaItems = restoredSongs.map { it.toMediaItem() }
                     player.setMediaItems(mediaItems)
                     
                     if (currentIndexVal >= 0 && currentIndexVal < mediaItems.size) {
@@ -811,7 +749,6 @@ class PlayerViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        getApplication<Application>().unregisterReceiver(mediaCommandReceiver)
         controllerFuture?.let { MediaController.releaseFuture(it) }
     }
 

@@ -116,25 +116,6 @@ class BiliMediaService : MediaSessionService() {
             .build()
             
         val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
-            override fun getAvailableCommands(): Player.Commands {
-                return super.getAvailableCommands().buildUpon()
-                    .add(Player.COMMAND_SEEK_TO_NEXT)
-                    .add(Player.COMMAND_SEEK_TO_PREVIOUS)
-                    .build()
-            }
-
-            override fun seekToNext() {
-                val intent = Intent("com.thehbc.bilimusic.ACTION_SKIP_NEXT")
-                intent.setPackage(packageName)
-                sendBroadcast(intent)
-            }
-
-            override fun seekToPrevious() {
-                val intent = Intent("com.thehbc.bilimusic.ACTION_SKIP_PREVIOUS")
-                intent.setPackage(packageName)
-                sendBroadcast(intent)
-            }
-
             override fun play() {
                 fadeJob?.cancel()
                 val duration = fadeDurationMs.toLong()
