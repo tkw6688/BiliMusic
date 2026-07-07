@@ -194,9 +194,31 @@ class PlayerViewModel(
                     skipNext(isAutoAdvance = true)
                 }
             }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && mediaItem != null) {
+                    val songId = mediaItem.mediaId
+                    val matchedSong = _state.value.queue.firstOrNull { it.id == songId }
+                    if (matchedSong != null) {
+                        val idx = _state.value.queue.indexOf(matchedSong)
+                        _state.update {
+                            it.copy(
+                                currentSong = matchedSong,
+                                currentIndex = idx,
+                                progress = 0f,
+                                currentPositionMs = 0L,
+                                durationMs = parseDurationStringToMs(matchedSong.duration),
+                                audioBitrate = null,
+                                audioCodec = null
+                            )
+                        }
+                    }
+                }
+            }
             override fun onTracksChanged(tracks: Tracks) {
                 var sampleRate: Int? = null
                 var channelCount: Int? = null
+                var bitrate: Int? = null
+                var codec: String? = null
                 
                 for (group in tracks.groups) {
                     if (group.isSelected && group.type == C.TRACK_TYPE_AUDIO) {
@@ -209,18 +231,34 @@ class PlayerViewModel(
                                 if (format.channelCount != Format.NO_VALUE) {
                                     channelCount = format.channelCount
                                 }
+                                if (format.bitrate != Format.NO_VALUE) {
+                                    bitrate = format.bitrate
+                                }
+                                val rawCodec = format.codecs ?: format.sampleMimeType
+                                if (!rawCodec.isNullOrEmpty()) {
+                                    codec = when {
+                                        rawCodec.contains("ec-3", ignoreCase = true) || rawCodec.contains("eac3", ignoreCase = true) -> "Dolby Audio / ec-3"
+                                        rawCodec.contains("ac-3", ignoreCase = true) || rawCodec.contains("ac3", ignoreCase = true) -> "Dolby Audio / ac-3"
+                                        rawCodec.contains("ac-4", ignoreCase = true) || rawCodec.contains("ac4", ignoreCase = true) -> "Dolby Audio / ac-4"
+                                        rawCodec.contains("mp4a", ignoreCase = true) || rawCodec.contains("aac", ignoreCase = true) -> "AAC"
+                                        rawCodec.contains("opus", ignoreCase = true) -> "Opus"
+                                        rawCodec.contains("flac", ignoreCase = true) -> "FLAC"
+                                        rawCodec.contains("mpeg", ignoreCase = true) || rawCodec.contains("mp3", ignoreCase = true) -> "MP3"
+                                        else -> rawCodec.substringAfter("audio/").uppercase()
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 
-                if (sampleRate != null || channelCount != null) {
-                    _state.update { 
-                        it.copy(
-                            audioSampleRate = sampleRate ?: it.audioSampleRate,
-                            audioChannels = channelCount ?: it.audioChannels
-                        ) 
-                    }
+                _state.update { 
+                    it.copy(
+                        audioSampleRate = sampleRate ?: it.audioSampleRate,
+                        audioChannels = channelCount ?: it.audioChannels,
+                        audioBitrate = bitrate ?: it.audioBitrate,
+                        audioCodec = codec ?: it.audioCodec
+                    ) 
                 }
             }
         })

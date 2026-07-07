@@ -148,7 +148,7 @@ fun PlayerScreenContent(
                                 Text("比特率: $bitrateStr")
                                 val sampleRateStr = state.audioSampleRate?.let { "${it} Hz" } ?: "未知"
                                 Text("采样率: $sampleRateStr")
-                                val channelsStr = state.audioChannels?.let { if (it == 2) "立体声 (2.0)" else if (it == 1) "单声道 (1.0)" else "$it 声道" } ?: "未知"
+                                val channelsStr = state.audioChannels?.toString() ?: "未知"
                                 Text("声道: $channelsStr")
                                 Text("编码格式: ${state.audioCodec ?: "未知"}")
                             }
