@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
 class PlaylistViewModel(
@@ -298,9 +299,12 @@ class PlaylistViewModel(
                 currentPage = page - 1
                 hasMore = false
                 onComplete(fullList)
-            } catch (e: Exception) {
-                onComplete(fullList)
             } finally {
+                _isLoadingMore.value = false
+            }
+        }
+    }
+
     fun loadBiliPlaylists() {
         viewModelScope.launch {
             val uid = authManager.uidFlow.firstOrNull() ?: return@launch

@@ -143,7 +143,10 @@ class BiliMediaService : MediaSessionService() {
         val imageDataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
             .setDefaultRequestProperties(mapOf("Referer" to "https://www.bilibili.com/"))
-        val underlyingBitmapLoader = androidx.media3.datasource.DataSourceBitmapLoader(this, imageDataSourceFactory)
+        val executor = com.google.common.util.concurrent.MoreExecutors.listeningDecorator(
+            java.util.concurrent.Executors.newSingleThreadExecutor()
+        )
+        val underlyingBitmapLoader = androidx.media3.datasource.DataSourceBitmapLoader(executor, imageDataSourceFactory)
         val cacheBitmapLoader = androidx.media3.session.CacheBitmapLoader(underlyingBitmapLoader)
 
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
