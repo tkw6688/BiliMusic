@@ -200,6 +200,18 @@ class PlayerViewModel(
         mediaController?.stop()
         mediaController?.clearMediaItems()
         
+        // 显式启动前台服务，以保持前台状态
+        try {
+            val serviceIntent = Intent(getApplication(), BiliMediaService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                getApplication<Application>().startForegroundService(serviceIntent)
+            } else {
+                getApplication<Application>().startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            // 忽略可能的启动服务异常
+        }
+
         // 先同步 UI 状态
         _state.update {
             it.copy(
@@ -215,76 +227,37 @@ class PlayerViewModel(
         }
 
         if (song.bvid != null && song.cid != null) {
-            viewModelScope.launch {
-                try {
-                    val response = apiService.getPlayUrl(song.bvid, song.cid)
-                    if (response.code == 0) {
-                        val dash = response.data?.dash
-                        // 优先选择带宽 (bandwidth) 最高、也就是音质最好的音轨 (通常 30280 是 320kbps)
-                        val audioStream = dash?.audio?.maxByOrNull { it.bandwidth } ?: dash?.video?.firstOrNull()
-                        
-                        var audioUrl = audioStream?.baseUrl ?: audioStream?.base_url
-                        
-                        // 【核心修复】过滤 B站 P2P MCDN 节点，防止 ConnectException
-                        if (audioUrl != null && audioUrl.contains("mcdn.bilivideo")) {
-                            val backupUrls = audioStream?.backupUrl ?: emptyList()
-                            audioUrl = backupUrls.firstOrNull { !it.contains("mcdn") } ?: audioUrl
-                        }
-                        
-                        _state.update {
-                            it.copy(
-                                audioBitrate = audioStream?.bandwidth,
-                                audioCodec = audioStream?.codecs
-                            )
-                        }
-                        
-                        // 如果连 dash 都没有，尝试 fallback 到早期的 durl 格式
-                        if (audioUrl.isNullOrEmpty()) {
-                            val durlStream = response.data?.durl?.firstOrNull()
-                            audioUrl = durlStream?.url
-                            if (audioUrl != null && audioUrl.contains("mcdn.bilivideo")) {
-                                audioUrl = durlStream?.backup_url?.firstOrNull { !it.contains("mcdn") } ?: audioUrl
-                            }
-                        }
-
-                        if (!audioUrl.isNullOrEmpty()) {
-                            val artistWithParent = buildString {
-                                append(song.artist)
-                                if (!song.parentTitle.isNullOrEmpty()) {
-                                    append(" · ")
-                                    append(song.parentTitle)
-                                }
-                            }
-                            val metadata = MediaMetadata.Builder()
-                                .setTitle(song.title)
-                                .setArtist(artistWithParent)
-                                .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
-                                .build()
-
-                            val mediaItem = MediaItem.Builder()
-                                .setMediaId(song.id)
-                                .setUri(Uri.parse(audioUrl))
-                                .setMediaMetadata(metadata)
-                                .build()
-
-                            mediaController?.setMediaItem(mediaItem)
-                            mediaController?.prepare()
-                            mediaController?.play()
-                            
-                            // 更新 uri 回状态中（可选）
-                            _state.update { it.copy(currentSong = song.copy(mediaUri = audioUrl)) }
-                        } else {
-                            _errorEvent.emit("播放失败: ${response.message}")
-                            _state.update { it.copy(isPlaying = false) }
-                        }
-                    } else {
-                        _errorEvent.emit("播放失败: ${response.message}")
-                        _state.update { it.copy(isPlaying = false) }
-                    }
-                } catch (e: Exception) {
-                    _errorEvent.emit("网络异常或资源失效")
-                    _state.update { it.copy(isPlaying = false) }
+            val fakeUriStr = "bilimusic://play?bvid=${song.bvid}&cid=${song.cid}"
+            val artistWithParent = buildString {
+                append(song.artist)
+                if (!song.parentTitle.isNullOrEmpty()) {
+                    append(" · ")
+                    append(song.parentTitle)
                 }
+            }
+            val metadata = MediaMetadata.Builder()
+                .setTitle(song.title)
+                .setArtist(artistWithParent)
+                .setArtworkUri(if (!song.albumArtUrl.isNullOrEmpty()) Uri.parse(song.albumArtUrl) else null)
+                .build()
+
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(song.id)
+                .setUri(Uri.parse(fakeUriStr))
+                .setMediaMetadata(metadata)
+                .build()
+
+            mediaController?.setMediaItem(mediaItem)
+            mediaController?.prepare()
+            mediaController?.play()
+            
+            // 清除之前的音频规格，等待 ExoPlayer TracksChanged 自动上报
+            _state.update {
+                it.copy(
+                    audioBitrate = null,
+                    audioCodec = null,
+                    currentSong = song.copy(mediaUri = fakeUriStr)
+                )
             }
         } else if (song.mediaUri != null) {
             // 回退到假数据（如果有）

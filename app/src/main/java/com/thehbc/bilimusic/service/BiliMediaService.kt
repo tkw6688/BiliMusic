@@ -9,6 +9,8 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
+import java.io.IOException
 import com.thehbc.bilimusic.MainActivity
 import com.thehbc.bilimusic.BiliMusicApp
 
@@ -16,6 +18,7 @@ class BiliMediaService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         
@@ -34,6 +37,51 @@ class BiliMediaService : MediaSessionService() {
             dataSourceFactory,
             object : androidx.media3.datasource.ResolvingDataSource.Resolver {
                 override fun resolveDataSpec(dataSpec: androidx.media3.datasource.DataSpec): androidx.media3.datasource.DataSpec {
+                    val uri = dataSpec.uri
+                    var targetUri = uri
+                    
+                    if (uri.scheme == "bilimusic" && uri.host == "play") {
+                        val bvid = uri.getQueryParameter("bvid")
+                        val cid = uri.getQueryParameter("cid")?.toLongOrNull()
+                        if (bvid != null && cid != null) {
+                            try {
+                                val response = kotlinx.coroutines.runBlocking {
+                                    appContainer.biliApiService.getPlayUrl(bvid, cid)
+                                }
+                                if (response.code == 0) {
+                                    val dash = response.data?.dash
+                                    val audioStream = dash?.audio?.maxByOrNull { it.bandwidth } ?: dash?.video?.firstOrNull()
+                                    var audioUrl = audioStream?.baseUrl ?: audioStream?.base_url
+                                    
+                                    if (audioUrl != null && audioUrl.contains("mcdn.bilivideo")) {
+                                        val backupUrls = audioStream?.backupUrl ?: emptyList()
+                                        audioUrl = backupUrls.firstOrNull { !it.contains("mcdn") } ?: audioUrl
+                                    }
+                                    
+                                    if (audioUrl.isNullOrEmpty()) {
+                                        val durlStream = response.data?.durl?.firstOrNull()
+                                        audioUrl = durlStream?.url
+                                        if (audioUrl != null && audioUrl.contains("mcdn.bilivideo")) {
+                                            audioUrl = durlStream?.backup_url?.firstOrNull { !it.contains("mcdn") } ?: audioUrl
+                                        }
+                                    }
+                                    
+                                    if (!audioUrl.isNullOrEmpty()) {
+                                        targetUri = Uri.parse(audioUrl)
+                                    } else {
+                                        throw IOException("播放流解析失败: data为空")
+                                    }
+                                } else {
+                                    throw IOException("播放流解析失败: code=${response.code}, msg=${response.message}")
+                                }
+                            } catch (e: Exception) {
+                                throw IOException("网络请求异常: ${e.message}", e)
+                            }
+                        } else {
+                            throw IOException("播放流解析失败: 无效的 bvid 或 cid")
+                        }
+                    }
+                    
                     val cookieHeader = buildString {
                         if (!authManager.currentBuvid3.isNullOrEmpty()) append("buvid3=${authManager.currentBuvid3}; ")
                         if (!authManager.currentBuvid4.isNullOrEmpty()) append("buvid4=${authManager.currentBuvid4}; ")
@@ -46,6 +94,7 @@ class BiliMediaService : MediaSessionService() {
                     currentHeaders["Cookie"] = cookieHeader
                     
                     return dataSpec.buildUpon()
+                        .setUri(targetUri)
                         .setHttpRequestHeaders(currentHeaders)
                         .build()
                 }
@@ -58,6 +107,7 @@ class BiliMediaService : MediaSessionService() {
         val exoPlayer = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true) // 处理音频焦点
             .setHandleAudioBecomingNoisy(true) // 拔出耳机自动暂停
+            .setWakeMode(C.WAKE_MODE_LOCAL) // 锁屏/熄屏 CPU 唤醒锁
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
             
