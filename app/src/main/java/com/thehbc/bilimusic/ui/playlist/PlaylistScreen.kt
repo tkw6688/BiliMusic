@@ -15,6 +15,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,9 +50,28 @@ fun PlaylistScreen(
     val songs by viewModel.songs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsState()
+    
+    var isFullLoading by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(playlist.id) {
         viewModel.loadPlaylist(playlist.id)
+    }
+
+    // 监听滑动触底，自动加载下一页
+    val shouldLoadMore = remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItemsNumber = layoutInfo.totalItemsCount
+            val lastVisibleItemIndex = (layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) + 1
+            lastVisibleItemIndex > 0 && totalItemsNumber > 0 && lastVisibleItemIndex >= totalItemsNumber - 4
+        }
+    }
+    LaunchedEffect(shouldLoadMore.value) {
+        if (shouldLoadMore.value) {
+            viewModel.loadNextPage()
+        }
     }
 
     Scaffold(
@@ -82,6 +106,7 @@ fun PlaylistScreen(
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
@@ -90,7 +115,19 @@ fun PlaylistScreen(
             item {
                 PlaylistHeader(
                     playlist = playlist,
-                    onPlayAll = { onPlayAll(songs) },
+                    songCount = if (playlist.id.startsWith("local_")) songs.size else playlist.songCount,
+                    loadedCount = songs.size,
+                    onPlayAll = {
+                        if (!playlist.id.startsWith("local_")) {
+                            isFullLoading = true
+                            viewModel.getPlaylistSongsFull(playlist.id, songs) { fullSongs ->
+                                isFullLoading = false
+                                onPlayAll(fullSongs)
+                            }
+                        } else {
+                            onPlayAll(songs)
+                        }
+                    },
                 )
             }
             
@@ -126,16 +163,48 @@ fun PlaylistScreen(
                         onClick = { onSongClick(song) },
                     )
                 }
+                if (isLoadingMore) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    }
+                }
             }
             // 底部留白
             item { Spacer(Modifier.height(16.dp)) }
         }
+    }
+
+    if (isFullLoading) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("正在拉取完整歌曲列表...") },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            },
+            confirmButton = {}
+        )
     }
 }
 
 @Composable
 private fun PlaylistHeader(
     playlist: Playlist,
+    songCount: Int,
+    loadedCount: Int,
     onPlayAll: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -183,8 +252,14 @@ private fun PlaylistHeader(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(4.dp))
+            val isLocal = playlist.id.startsWith("local_")
+            val subtitleText = if (isLocal) {
+                "$songCount 首歌曲"
+            } else {
+                "视频数: $songCount · 已加载 $loadedCount 首歌曲"
+            }
             Text(
-                text = "${playlist.songCount} 首歌曲 · 用户创建",
+                text = subtitleText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

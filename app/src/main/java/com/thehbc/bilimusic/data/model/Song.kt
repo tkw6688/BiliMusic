@@ -13,4 +13,6 @@ data class Song(
     val bvid: String? = null,
     val cid: Long? = null,
     val parentTitle: String? = null,
+    val page: Int? = null,
+    val partTitle: String? = null,
 )

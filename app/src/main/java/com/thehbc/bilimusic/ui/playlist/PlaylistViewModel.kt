@@ -30,7 +30,18 @@ class PlaylistViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private var currentPlaylistId: String? = null
+    private var currentPage = 1
+    private var hasMore = false
+
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
     fun loadPlaylist(playlistId: String) {
+        currentPlaylistId = playlistId
+        currentPage = 1
+        hasMore = false
+        _songs.value = emptyList()
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
@@ -52,7 +63,10 @@ class PlaylistViewModel(
                             artist    = item.artist,
                             duration  = item.durationStr,
                             albumArtUrl = item.albumArtUrl,
-                            mediaUri  = null
+                            mediaUri  = null,
+                            parentTitle = item.parentTitle,
+                            page      = item.page,
+                            partTitle = item.partTitle
                         )
                     }
                 } else {
@@ -61,14 +75,120 @@ class PlaylistViewModel(
                         _error.value = "无效的收藏夹 ID"
                         return@launch
                     }
+                    fetchPage(mediaId, 1, isAppend = false)
+                }
+            } catch (e: Exception) {
+                _error.value = "加载失败: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadNextPage() {
+        val playlistId = currentPlaylistId ?: return
+        if (playlistId.startsWith("local_") || _isLoading.value || _isLoadingMore.value || !hasMore) return
+
+        val mediaId = playlistId.toLongOrNull() ?: return
+        viewModelScope.launch {
+            _isLoadingMore.value = true
+            try {
+                fetchPage(mediaId, currentPage + 1, isAppend = true)
+            } catch (e: Exception) {
+                // 静默失败
+            } finally {
+                _isLoadingMore.value = false
+            }
+        }
+    }
+
+    private suspend fun fetchPage(mediaId: Long, pageNum: Int, isAppend: Boolean) {
+        val response = apiService.getFavResources(
+            mediaId  = mediaId,
+            pageNum  = pageNum,
+            pageSize = 20
+        )
+        if (response.code == 0) {
+            hasMore = response.data?.has_more ?: false
+            currentPage = pageNum
+            val medias = response.data?.medias ?: emptyList()
+            val newSongs = coroutineScope {
+                medias.map { media ->
+                    async {
+                        if (media.bvid != null && media.page != null && media.page > 1) {
+                            try {
+                                val detailResponse = apiService.getVideoDetail(media.bvid)
+                                if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
+                                    val cleanVideoTitle = media.title ?: ""
+                                    val uploader = media.upper?.name ?: "未知歌手"
+                                    detailResponse.data.pages.map { page ->
+                                        val durationSeconds = page.duration
+                                        val minutes = durationSeconds / 60
+                                        val seconds = durationSeconds % 60
+                                        val cleanPageTitle = BiliTitleParser.cleanPageTitle(page.part ?: "未知歌曲")
+                                        Song(
+                                            id          = "${media.id}_${page.cid}",
+                                            bvid        = media.bvid,
+                                            cid         = page.cid,
+                                            title       = cleanPageTitle,
+                                            artist      = uploader,
+                                            duration    = String.format("%02d:%02d", minutes, seconds),
+                                            albumArtUrl = media.cover,
+                                            mediaUri    = null,
+                                            parentTitle = cleanVideoTitle,
+                                            page        = page.page,
+                                            partTitle   = page.part
+                                        )
+                                    }
+                                } else {
+                                    listOf(mapToSingleSong(media))
+                                }
+                            } catch (e: Exception) {
+                                listOf(mapToSingleSong(media))
+                            }
+                        } else {
+                            listOf(mapToSingleSong(media))
+                        }
+                    }
+                }.awaitAll().flatten()
+            }
+            if (isAppend) {
+                _songs.value = _songs.value + newSongs
+            } else {
+                _songs.value = newSongs
+            }
+        } else {
+            if (!isAppend) {
+                _error.value = response.message
+            }
+        }
+    }
+
+    fun getPlaylistSongsFull(playlistId: String, currentSongs: List<Song>, onComplete: (List<Song>) -> Unit) {
+        if (playlistId.startsWith("local_") || !hasMore) {
+            onComplete(currentSongs)
+            return
+        }
+        val mediaId = playlistId.toLongOrNull() ?: run {
+            onComplete(currentSongs)
+            return
+        }
+        viewModelScope.launch {
+            _isLoadingMore.value = true
+            val fullList = currentSongs.toMutableList()
+            try {
+                var page = currentPage + 1
+                var more = true
+                while (more) {
                     val response = apiService.getFavResources(
                         mediaId  = mediaId,
-                        pageNum  = 1,
+                        pageNum  = page,
                         pageSize = 20
                     )
                     if (response.code == 0) {
+                        more = response.data?.has_more ?: false
                         val medias = response.data?.medias ?: emptyList()
-                        val flattenedSongs = coroutineScope {
+                        val pageSongs = coroutineScope {
                             medias.map { media ->
                                 async {
                                     if (media.bvid != null && media.page != null && media.page > 1) {
@@ -77,21 +197,23 @@ class PlaylistViewModel(
                                             if (detailResponse.code == 0 && detailResponse.data?.pages != null) {
                                                 val cleanVideoTitle = media.title ?: ""
                                                 val uploader = media.upper?.name ?: "未知歌手"
-                                                detailResponse.data.pages.map { page ->
-                                                    val durationSeconds = page.duration
+                                                detailResponse.data.pages.map { pageItem ->
+                                                    val durationSeconds = pageItem.duration
                                                     val minutes = durationSeconds / 60
                                                     val seconds = durationSeconds % 60
-                                                    val cleanPageTitle = BiliTitleParser.cleanPageTitle(page.part ?: "未知歌曲")
+                                                    val cleanPageTitle = BiliTitleParser.cleanPageTitle(pageItem.part ?: "未知歌曲")
                                                     Song(
-                                                        id          = "${media.id}_${page.cid}",
+                                                        id          = "${media.id}_${pageItem.cid}",
                                                         bvid        = media.bvid,
-                                                        cid         = page.cid,
+                                                        cid         = pageItem.cid,
                                                         title       = cleanPageTitle,
                                                         artist      = uploader,
                                                         duration    = String.format("%02d:%02d", minutes, seconds),
                                                         albumArtUrl = media.cover,
                                                         mediaUri    = null,
-                                                        parentTitle = cleanVideoTitle
+                                                        parentTitle = cleanVideoTitle,
+                                                        page        = pageItem.page,
+                                                        partTitle   = pageItem.part
                                                     )
                                                 }
                                             } else {
@@ -106,20 +228,26 @@ class PlaylistViewModel(
                                 }
                             }.awaitAll().flatten()
                         }
-                        _songs.value = flattenedSongs
+                        fullList.addAll(pageSongs)
+                        page++
                     } else {
-                        _error.value = response.message
+                        more = false
                     }
                 }
+                
+                _songs.value = fullList
+                currentPage = page - 1
+                hasMore = false
+                onComplete(fullList)
             } catch (e: Exception) {
-                _error.value = "加载失败: ${e.message}"
+                onComplete(fullList)
             } finally {
-                _isLoading.value = false
+                _isLoadingMore.value = false
             }
         }
     }
 
-    private fun mapToSingleSong(media: FavMedia): Song {
+    fun mapToSingleSong(media: FavMedia): Song {
         val durationSeconds = media.duration ?: 0
         val minutes = durationSeconds / 60
         val seconds = durationSeconds % 60
@@ -132,7 +260,9 @@ class PlaylistViewModel(
             duration    = String.format("%02d:%02d", minutes, seconds),
             albumArtUrl = media.cover,
             mediaUri    = null,
-            parentTitle = null
+            parentTitle = null,
+            page        = 1,
+            partTitle   = media.title
         )
     }
 
