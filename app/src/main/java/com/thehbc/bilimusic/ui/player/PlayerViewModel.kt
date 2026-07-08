@@ -415,6 +415,13 @@ class PlayerViewModel(
         }
     }
 
+    fun playAllShuffled(songs: List<Song>, playlist: Playlist? = null) {
+        if (songs.isEmpty()) return
+        val randomSong = songs.random()
+        playSong(randomSong, playlist, songs)
+        mediaController?.shuffleModeEnabled = true
+    }
+
     fun playSong(song: Song, playlist: Playlist? = null, newQueue: List<Song>? = null) {
         val previousQueue = _state.value.queue
         val currentQ = newQueue ?: previousQueue

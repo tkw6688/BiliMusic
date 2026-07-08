@@ -1,6 +1,7 @@
 package com.thehbc.bilimusic.data.repository
 
 import com.thehbc.bilimusic.data.local.AuthManager
+import com.thehbc.bilimusic.data.local.PlayerPrefsManager
 import com.thehbc.bilimusic.data.model.Playlist
 import com.thehbc.bilimusic.data.model.Song
 import com.thehbc.bilimusic.data.network.api.BiliApiService
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -19,11 +21,16 @@ data class FavSongsResult(
     val hasMore: Boolean
 )
 
+data class PlayUrlInfo(
+    val url: String,
+    val cacheKey: String
+)
+
 interface BiliRepository {
     suspend fun getCreatedPlaylists(uid: Long): Result<List<Playlist>>
     suspend fun getPlaylistSongs(mediaId: Long, pageNum: Int, pageSize: Int): Result<FavSongsResult>
     suspend fun getVideoDetail(bvid: String): Result<VideoDetailResponse>
-    suspend fun getPlayUrl(bvid: String, cid: Long): Result<String>
+    suspend fun getPlayUrl(bvid: String, cid: Long): Result<PlayUrlInfo>
     suspend fun prefetchPlayUrl(bvid: String, cid: Long)
     
     // Cache methods
@@ -39,6 +46,7 @@ class BiliRepositoryImpl(
     private val authManager: AuthManager,
     private val metadataCacheManager: com.thehbc.bilimusic.data.local.MetadataCacheManager,
     private val simpleCache: androidx.media3.datasource.cache.SimpleCache,
+    private val playerPrefsManager: PlayerPrefsManager,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : BiliRepository {
 
@@ -177,17 +185,54 @@ class BiliRepositoryImpl(
         }
     }
 
-    override suspend fun getPlayUrl(bvid: String, cid: Long): Result<String> = withContext(ioDispatcher) {
-        val cacheKey = "${bvid}_$cid"
-        playUrlCache[cacheKey]?.let { cachedUrl ->
-            return@withContext Result.success(cachedUrl)
+    private fun isQualityCached(bvid: String, cid: Long, quality: Int): Boolean {
+        val key = "bilimusic_${bvid}_${cid}_$quality"
+        val metadata = simpleCache.getContentMetadata(key)
+        val contentLength = metadata.get(
+            androidx.media3.datasource.cache.ContentMetadata.KEY_CONTENT_LENGTH,
+            -1L
+        )
+        return contentLength != -1L && simpleCache.getCachedBytes(key, 0, contentLength) == contentLength
+    }
+
+    override suspend fun getPlayUrl(bvid: String, cid: Long): Result<PlayUrlInfo> = withContext(ioDispatcher) {
+        var qualityPref = playerPrefsManager.preferredAudioQualityFlow.first()
+        
+        // 优先策略：如果本地已经完整缓存了更高音质的版本，则优先使用已缓存的最高音质版本进行播放（节约流量 + 零延迟）
+        if (qualityPref != 0 && isQualityCached(bvid, cid, 0)) {
+            qualityPref = 0
+        } else if (qualityPref == 2 && isQualityCached(bvid, cid, 1)) {
+            qualityPref = 1
+        }
+
+        val cacheKey = "bilimusic_${bvid}_${cid}_$qualityPref"
+        val memoryCacheKey = "${bvid}_${cid}_$qualityPref"
+        
+        playUrlCache[memoryCacheKey]?.let { cachedUrl ->
+            return@withContext Result.success(PlayUrlInfo(cachedUrl, cacheKey))
         }
 
         try {
             val response = apiService.getPlayUrl(bvid, cid)
             if (response.code == 0) {
                 val dash = response.data?.dash
-                val audioStream = dash?.audio?.maxByOrNull { it.bandwidth } ?: dash?.video?.firstOrNull()
+                val audioList = mutableListOf<com.thehbc.bilimusic.data.network.model.DashStream>()
+                dash?.audio?.let { audioList.addAll(it) }
+                dash?.flac?.audio?.let { audioList.add(it) }
+                dash?.dolby?.audio?.let { audioList.addAll(it) }
+
+                val audioStream = when (qualityPref) {
+                    1 -> { // 标准音质：匹配接近 128kbps (131072 bps) 的流
+                        audioList.minByOrNull { Math.abs(it.bandwidth - 128 * 1024) }
+                    }
+                    2 -> { // 省流模式：匹配最小带宽的流
+                        audioList.minByOrNull { it.bandwidth }
+                    }
+                    else -> { // 极佳音质 (0)：匹配最大带宽的流 (支持 Dolby/Hi-Res FLAC)
+                        audioList.maxByOrNull { it.bandwidth }
+                    }
+                } ?: dash?.video?.firstOrNull()
+
                 var audioUrl = audioStream?.baseUrl ?: audioStream?.base_url
                 
                 // MCDN 节点连接容易断线卡缓冲，此处进行规避过滤
@@ -205,8 +250,8 @@ class BiliRepositoryImpl(
                 }
                 
                 if (!audioUrl.isNullOrEmpty()) {
-                    playUrlCache[cacheKey] = audioUrl
-                    Result.success(audioUrl)
+                    playUrlCache[memoryCacheKey] = audioUrl
+                    Result.success(PlayUrlInfo(audioUrl, cacheKey))
                 } else {
                     Result.failure(IOException("播放流解析失败: data为空"))
                 }
@@ -227,17 +272,22 @@ class BiliRepositoryImpl(
     override fun getSongsCache(playlistId: String): List<Song>? = metadataCacheManager.getSongs(playlistId)
     override fun saveSongsCache(playlistId: String, songs: List<Song>) = metadataCacheManager.saveSongs(playlistId, songs)
     override fun isSongCached(song: Song): Boolean {
-        val cacheKey = if (song.bvid != null && song.cid != null) {
-            "bilimusic_${song.bvid}_${song.cid}"
+        if (song.bvid != null && song.cid != null) {
+            for (q in 0..2) {
+                if (isQualityCached(song.bvid, song.cid, q)) {
+                    return true
+                }
+            }
+            return false
         } else {
-            "bilimusic_${song.id}"
+            val cacheKey = "bilimusic_${song.id}"
+            val metadata = simpleCache.getContentMetadata(cacheKey)
+            val contentLength = metadata.get(
+                androidx.media3.datasource.cache.ContentMetadata.KEY_CONTENT_LENGTH,
+                -1L
+            )
+            return contentLength != -1L &&
+                    simpleCache.getCachedBytes(cacheKey, 0, contentLength) == contentLength
         }
-        val metadata = simpleCache.getContentMetadata(cacheKey)
-        val contentLength = metadata.get(
-            androidx.media3.datasource.cache.ContentMetadata.KEY_CONTENT_LENGTH,
-            -1L
-        )
-        return contentLength != -1L &&
-                simpleCache.getCachedBytes(cacheKey, 0, contentLength) == contentLength
     }
 }

@@ -69,6 +69,6 @@ class AppContainer(private val context: Context) {
     }
 
     val biliRepository: com.thehbc.bilimusic.data.repository.BiliRepository by lazy {
-        com.thehbc.bilimusic.data.repository.BiliRepositoryImpl(biliApiService, authManager, metadataCacheManager, simpleCache)
+        com.thehbc.bilimusic.data.repository.BiliRepositoryImpl(biliApiService, authManager, metadataCacheManager, simpleCache, playerPrefsManager)
     }
 }

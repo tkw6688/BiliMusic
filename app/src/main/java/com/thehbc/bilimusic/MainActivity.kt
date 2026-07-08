@@ -37,6 +37,7 @@ import com.thehbc.bilimusic.ui.auth.LoginScreen
 import com.thehbc.bilimusic.ui.auth.AuthViewModel
 import com.thehbc.bilimusic.ui.profile.ProfileViewModel
 import com.thehbc.bilimusic.ui.profile.AboutScreen
+import com.thehbc.bilimusic.ui.profile.SettingsScreen
 import com.thehbc.bilimusic.ui.theme.BiliMusicTheme
 
 // 定义在文件级别，避免在 Composable 内部每次重建
@@ -90,7 +91,10 @@ class MainActivity : ComponentActivity() {
                 )
                 val profileViewModel: ProfileViewModel = viewModel(
                     factory = ProfileViewModel.provideFactory(
-                        authManager = appContainer.authManager
+                        authManager = appContainer.authManager,
+                        playerPrefsManager = appContainer.playerPrefsManager,
+                        localPlaylistRepository = appContainer.localPlaylistRepository,
+                        simpleCache = appContainer.simpleCache
                     )
                 )
                 val playlistViewModel: PlaylistViewModel = viewModel(
@@ -208,6 +212,12 @@ fun BiliMusicApp(
                             showPlayer = true
                         }
                     },
+                    onPlayAllShuffled = { songs ->
+                        if (songs.isNotEmpty()) {
+                            playerViewModel.playAllShuffled(songs, playlist)
+                            showPlayer = true
+                        }
+                    },
                     onInsertNext = { song -> playerViewModel.insertNext(song) },
                     onAppendToQueue = { song -> playerViewModel.appendToQueue(song) },
                     onAddClick = {
@@ -231,7 +241,14 @@ fun BiliMusicApp(
                 ProfileScreen(
                     viewModel = profileViewModel,
                     onLoginClick = { navController.navigate("login") },
-                    onAboutClick = { navController.navigate("about") }
+                    onAboutClick = { navController.navigate("about") },
+                    onSettingsClick = { navController.navigate("settings") }
+                )
+            }
+            composable("settings") {
+                SettingsScreen(
+                    viewModel = profileViewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable("about") {

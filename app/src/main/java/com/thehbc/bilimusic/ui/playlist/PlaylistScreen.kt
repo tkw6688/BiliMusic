@@ -55,6 +55,7 @@ fun PlaylistScreen(
     onBack: () -> Unit,
     onSongClick: (Song) -> Unit,
     onPlayAll: (List<Song>) -> Unit,
+    onPlayAllShuffled: (List<Song>) -> Unit = {},
     onInsertNext: (Song) -> Unit,
     onAppendToQueue: (Song) -> Unit,
     onAddClick: () -> Unit,
@@ -190,6 +191,35 @@ fun PlaylistScreen(
                             }
                         }
                     },
+                    onPlayAllShuffled = {
+                        if (!playlist.id.startsWith("local_")) {
+                            isFullLoading = true
+                            viewModel.getPlaylistSongsFull(playlist.id, songs) { fullSongs ->
+                                isFullLoading = false
+                                val playableSongs = if (isOffline) {
+                                    fullSongs.filter { viewModel.isSongCached(it) }
+                                } else {
+                                    fullSongs
+                                }
+                                if (playableSongs.isNotEmpty()) {
+                                    onPlayAllShuffled(playableSongs)
+                                } else {
+                                    Toast.makeText(context, "当前处于离线状态，无已缓存的歌曲可供播放", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            val playableSongs = if (isOffline) {
+                                songs.filter { viewModel.isSongCached(it) }
+                            } else {
+                                songs
+                            }
+                            if (playableSongs.isNotEmpty()) {
+                                onPlayAllShuffled(playableSongs)
+                            } else {
+                                Toast.makeText(context, "当前处于离线状态，无已缓存的歌曲可供播放", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 )
             }
             
@@ -383,6 +413,7 @@ private fun PlaylistHeader(
     songCount: Int,
     loadedCount: Int,
     onPlayAll: () -> Unit,
+    onPlayAllShuffled: () -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // 封面横幅
@@ -453,7 +484,7 @@ private fun PlaylistHeader(
                     Text("播放全部")
                 }
                 OutlinedButton(
-                    onClick = {},
+                    onClick = onPlayAllShuffled,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
                 ) {

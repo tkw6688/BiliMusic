@@ -210,7 +210,8 @@ data class DurlStream(
 data class Dash(
     val video: List<DashStream>?,
     val audio: List<DashStream>?,
-    val flac: Flac?
+    val flac: Flac?,
+    val dolby: Dolby?
 )
 
 data class DashStream(
@@ -229,4 +230,9 @@ data class DashStream(
 data class Flac(
     val display: Boolean,
     val audio: DashStream?
+)
+
+data class Dolby(
+    val type: Int,
+    val audio: List<DashStream>?
 )

@@ -13,6 +13,7 @@ import android.net.Uri
 import java.io.IOException
 import com.thehbc.bilimusic.MainActivity
 import com.thehbc.bilimusic.BiliMusicApp
+import com.thehbc.bilimusic.data.repository.PlayUrlInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import androidx.media3.common.util.BitmapLoader
@@ -60,24 +61,7 @@ class BiliMediaService : MediaSessionService() {
                 override fun resolveDataSpec(dataSpec: androidx.media3.datasource.DataSpec): androidx.media3.datasource.DataSpec {
                     val uri = dataSpec.uri
                     var targetUri = uri
-                    
-                    if (uri.scheme == "bilimusic" && uri.host == "play") {
-                        val bvid = uri.getQueryParameter("bvid")
-                        val cid = uri.getQueryParameter("cid")?.toLongOrNull()
-                        if (bvid != null && cid != null) {
-                            try {
-                                val result = kotlinx.coroutines.runBlocking {
-                                    appContainer.biliRepository.getPlayUrl(bvid, cid)
-                                }
-                                val audioUrl = result.getOrThrow()
-                                targetUri = Uri.parse(audioUrl)
-                            } catch (e: Exception) {
-                                throw IOException("播放流解析失败: ${e.message}", e)
-                            }
-                        } else {
-                            throw IOException("播放流解析失败: 无效的 bvid 或 cid")
-                        }
-                    }
+                    var resolvedCacheKey: String? = null
                     
                     val cookieHeader = buildString {
                         if (!authManager.currentBuvid3.isNullOrEmpty()) append("buvid3=${authManager.currentBuvid3}; ")
@@ -90,10 +74,32 @@ class BiliMediaService : MediaSessionService() {
                     currentHeaders["Referer"] = "https://www.bilibili.com/"
                     currentHeaders["Cookie"] = cookieHeader
                     
-                    return dataSpec.buildUpon()
+                    if (uri.scheme == "bilimusic" && uri.host == "play") {
+                        val bvid = uri.getQueryParameter("bvid")
+                        val cid = uri.getQueryParameter("cid")?.toLongOrNull()
+                        if (bvid != null && cid != null) {
+                            try {
+                                val result = kotlinx.coroutines.runBlocking {
+                                    appContainer.biliRepository.getPlayUrl(bvid, cid)
+                                }
+                                val playUrlInfo = result.getOrThrow()
+                                targetUri = Uri.parse(playUrlInfo.url)
+                                resolvedCacheKey = playUrlInfo.cacheKey
+                            } catch (e: Exception) {
+                                throw IOException("播放流解析失败: ${e.message}", e)
+                            }
+                        } else {
+                            throw IOException("播放流解析失败: 无效的 bvid 或 cid")
+                        }
+                    }
+                    
+                    val builder = dataSpec.buildUpon()
                         .setUri(targetUri)
                         .setHttpRequestHeaders(currentHeaders)
-                        .build()
+                    if (resolvedCacheKey != null) {
+                        builder.setKey(resolvedCacheKey)
+                    }
+                    return builder.build()
                 }
             }
         )

@@ -21,6 +21,7 @@ class PlayerPrefsManager(private val context: Context) {
         val LAST_REPEAT_MODE = intPreferencesKey("last_repeat_mode")
         val LAST_SHUFFLE_MODE = booleanPreferencesKey("last_shuffle_mode")
         val FADE_DURATION_MS = intPreferencesKey("fade_duration_ms")
+        val PREFERRED_AUDIO_QUALITY = intPreferencesKey("preferred_audio_quality")
     }
 
     val lastPlayingSongIdFlow: Flow<String?> = context.playerDataStore.data.map { it[LAST_PLAYING_SONG_ID] }
@@ -28,6 +29,7 @@ class PlayerPrefsManager(private val context: Context) {
     val lastRepeatModeFlow: Flow<Int> = context.playerDataStore.data.map { it[LAST_REPEAT_MODE] ?: 0 }
     val lastShuffleModeFlow: Flow<Boolean> = context.playerDataStore.data.map { it[LAST_SHUFFLE_MODE] ?: false }
     val fadeDurationFlow: Flow<Int> = context.playerDataStore.data.map { it[FADE_DURATION_MS] ?: 1000 }
+    val preferredAudioQualityFlow: Flow<Int> = context.playerDataStore.data.map { it[PREFERRED_AUDIO_QUALITY] ?: 0 }
 
     suspend fun savePlayerState(songId: String?, position: Long, repeatMode: Int, isShuffled: Boolean) {
         context.playerDataStore.edit { prefs ->
@@ -45,6 +47,12 @@ class PlayerPrefsManager(private val context: Context) {
     suspend fun saveFadeDuration(durationMs: Int) {
         context.playerDataStore.edit { prefs ->
             prefs[FADE_DURATION_MS] = durationMs
+        }
+    }
+
+    suspend fun savePreferredAudioQuality(quality: Int) {
+        context.playerDataStore.edit { prefs ->
+            prefs[PREFERRED_AUDIO_QUALITY] = quality
         }
     }
 }
