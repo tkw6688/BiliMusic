@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -275,8 +277,15 @@ fun BiliMusicApp(
         ModalBottomSheet(
             onDismissRequest = { showPlayer = false },
             sheetState = sheetState,
+            dragHandle = null,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = { WindowInsets(0) }
         ) {
-            PlayerScreen(viewModel = playerViewModel)
+            PlayerScreen(
+                viewModel = playerViewModel,
+                onCollapse = { showPlayer = false }
+            )
         }
     }
 }

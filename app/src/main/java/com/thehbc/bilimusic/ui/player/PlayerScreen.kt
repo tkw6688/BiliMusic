@@ -53,6 +53,7 @@ private fun isNetworkAvailable(context: Context): Boolean {
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel,
+    onCollapse: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -82,7 +83,8 @@ fun PlayerScreen(
             onRemoveSong = { viewModel.removeSongById(it) },
             onMoveSong = { from, to -> viewModel.moveSong(from, to) },
             isSongCached = viewModel::isSongCached,
-            isOffline = isOffline
+            isOffline = isOffline,
+            onCollapse = onCollapse
         )
         
         SnackbarHost(
@@ -107,7 +109,8 @@ fun PlayerScreenContent(
     onRemoveSong: (String) -> Unit,
     onMoveSong: (Int, Int) -> Unit,
     isSongCached: (com.thehbc.bilimusic.data.model.Song) -> Boolean = { false },
-    isOffline: Boolean = false
+    isOffline: Boolean = false,
+    onCollapse: () -> Unit = {}
 ) {
     val song = state.currentSong
     val coverColor = state.currentPlaylist?.coverColor
@@ -118,20 +121,33 @@ fun PlayerScreenContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 28.dp)
+            .padding(horizontal = 20.dp)
             .padding(bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // ── 标题行 ───────────────────────────────────────────────────────────
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = onCollapse) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "收起",
+                    modifier = Modifier.size(28.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text(
                 text = "正在播放",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.weight(1f)
             )
             Box {
                 var menuExpanded by remember { mutableStateOf(false) }
