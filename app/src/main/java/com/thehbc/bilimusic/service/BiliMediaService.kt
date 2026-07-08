@@ -35,10 +35,7 @@ class BiliMediaService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
 
     private val serviceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
-    private var fadeDurationMs = 1000
-    private var fadeJob: kotlinx.coroutines.Job? = null
-    private var monitorJob: kotlinx.coroutines.Job? = null
-    private var isFadingOut = false
+
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
@@ -52,11 +49,7 @@ class BiliMediaService : MediaSessionService() {
         val appContainer = (applicationContext as BiliMusicApp).container
         val authManager = appContainer.authManager
 
-        serviceScope.launch {
-            appContainer.playerPrefsManager.fadeDurationFlow.collect { duration ->
-                fadeDurationMs = duration
-            }
-        }
+
 
         val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
@@ -120,90 +113,7 @@ class BiliMediaService : MediaSessionService() {
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
             
-        val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
-            override fun play() {
-                fadeJob?.cancel()
-                val duration = fadeDurationMs.toLong()
-                if (duration <= 0) {
-                    exoPlayer.volume = 1f
-                    super.play()
-                    return
-                }
 
-                fadeJob = serviceScope.launch {
-                    exoPlayer.volume = 0f
-                    super.play()
-                    val steps = 20
-                    val interval = duration / steps
-                    for (i in 1..steps) {
-                        kotlinx.coroutines.delay(interval)
-                        exoPlayer.volume = i.toFloat() / steps
-                    }
-                    exoPlayer.volume = 1f
-                }
-            }
-
-            override fun pause() {
-                fadeJob?.cancel()
-                val duration = fadeDurationMs.toLong()
-                if (duration <= 0) {
-                    super.pause()
-                    return
-                }
-
-                fadeJob = serviceScope.launch {
-                    val startVolume = exoPlayer.volume
-                    val steps = 20
-                    val interval = duration / steps
-                    for (i in 1..steps) {
-                        kotlinx.coroutines.delay(interval)
-                        exoPlayer.volume = startVolume * (steps - i) / steps
-                    }
-                    exoPlayer.volume = 0f
-                    super.pause()
-                    exoPlayer.volume = 1f
-                }
-            }
-        }
-
-        val playerListener = object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
-                super.onMediaItemTransition(mediaItem, reason)
-                isFadingOut = false
-                
-                fadeJob?.cancel()
-                val duration = fadeDurationMs.toLong()
-                if (duration <= 0) {
-                    exoPlayer.volume = 1f
-                    return
-                }
-
-                fadeJob = serviceScope.launch {
-                    exoPlayer.volume = 0f
-                    val steps = 20
-                    val interval = duration / steps
-                    for (i in 1..steps) {
-                        kotlinx.coroutines.delay(interval)
-                        exoPlayer.volume = i.toFloat() / steps
-                    }
-                    exoPlayer.volume = 1f
-                }
-            }
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                super.onIsPlayingChanged(isPlaying)
-                if (isPlaying) {
-                    startPositionMonitoring(exoPlayer)
-                } else {
-                    monitorJob?.cancel()
-                }
-            }
-        }
-        exoPlayer.addListener(playerListener)
-        
-        if (exoPlayer.isPlaying) {
-            startPositionMonitoring(exoPlayer)
-        }
             
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
@@ -216,7 +126,7 @@ class BiliMediaService : MediaSessionService() {
         val underlyingBitmapLoader = CoilBitmapLoader(this)
         val cacheBitmapLoader = androidx.media3.session.CacheBitmapLoader(underlyingBitmapLoader)
 
-        mediaSession = MediaSession.Builder(this, forwardingPlayer)
+        mediaSession = MediaSession.Builder(this, exoPlayer)
             .setSessionActivity(pendingIntent)
             .setBitmapLoader(cacheBitmapLoader)
             .build()
@@ -226,44 +136,6 @@ class BiliMediaService : MediaSessionService() {
         return mediaSession
     }
 
-    private fun startPositionMonitoring(exoPlayer: ExoPlayer) {
-        monitorJob?.cancel()
-        monitorJob = serviceScope.launch {
-            while (isActive) {
-                delay(200)
-                if (exoPlayer.isPlaying) {
-                    val duration = exoPlayer.duration
-                    val position = exoPlayer.currentPosition
-                    val fadeDuration = fadeDurationMs.toLong()
-                    if (duration > 0 && fadeDuration > 0) {
-                        val remaining = duration - position
-                        if (remaining > fadeDuration) {
-                            if (isFadingOut) {
-                                isFadingOut = false
-                                exoPlayer.volume = 1f
-                            }
-                        } else if (remaining > 0 && !isFadingOut) {
-                            isFadingOut = true
-                            serviceScope.launch {
-                                val startVolume = exoPlayer.volume
-                                val steps = 10
-                                val interval = remaining / steps
-                                for (i in 1..steps) {
-                                    delay(interval)
-                                    if (!isFadingOut) {
-                                        exoPlayer.volume = 1f
-                                        return@launch
-                                    }
-                                    exoPlayer.volume = startVolume * (steps - i) / steps
-                                }
-                                exoPlayer.volume = 0f
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     override fun onDestroy() {
         serviceScope.cancel()
