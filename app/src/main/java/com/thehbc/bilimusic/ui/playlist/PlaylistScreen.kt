@@ -133,13 +133,72 @@ fun PlaylistScreen(
                     }
                 },
                 actions = {
+                    var showMenu by remember { mutableStateOf(false) }
+                    var showDeleteDialog by remember { mutableStateOf(false) }
+                    
                     if (playlist.id.startsWith("local_")) {
                         IconButton(onClick = onAddClick) {
                             Icon(Icons.Default.Add, contentDescription = "添加歌曲")
                         }
                     }
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            if (playlist.id.startsWith("local_")) {
+                                DropdownMenuItem(
+                                    text = { Text("删除歌单", color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        showMenu = false
+                                        showDeleteDialog = true
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                    }
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text("刷新歌曲") },
+                                    onClick = {
+                                        showMenu = false
+                                        viewModel.loadPlaylist(playlist.id)
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Refresh, contentDescription = null)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    
+                    if (showDeleteDialog) {
+                        val localId = playlist.id.removePrefix("local_").toLongOrNull()
+                        AlertDialog(
+                            onDismissRequest = { showDeleteDialog = false },
+                            title = { Text("删除歌单") },
+                            text = { Text("确定要删除本地歌单「${playlist.name}」吗？歌单内的歌曲不会被物理删除。") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showDeleteDialog = false
+                                    if (localId != null) {
+                                        viewModel.deleteLocalPlaylist(localId) {
+                                            onBack()
+                                        }
+                                    }
+                                }) {
+                                    Text("确定", color = MaterialTheme.colorScheme.error)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteDialog = false }) {
+                                    Text("取消")
+                                }
+                            }
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

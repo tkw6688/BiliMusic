@@ -87,6 +87,16 @@ class PlaylistViewModel(
         }
     }
 
+    fun deleteLocalPlaylist(playlistId: Long, onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            val playlist = localPlaylistRepository.getPlaylistById(playlistId)
+            if (playlist != null) {
+                localPlaylistRepository.deletePlaylist(playlist)
+                onDeleted()
+            }
+        }
+    }
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
