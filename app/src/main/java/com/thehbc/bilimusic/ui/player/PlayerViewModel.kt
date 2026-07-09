@@ -30,6 +30,8 @@ import com.thehbc.bilimusic.data.local.PlayerPrefsManager
 import com.thehbc.bilimusic.data.local.room.LocalActiveQueueDao
 import com.thehbc.bilimusic.data.local.room.LocalActiveQueueItem
 import com.thehbc.bilimusic.data.utils.BiliTitleParser
+import com.thehbc.bilimusic.data.model.LyricLine
+import com.thehbc.bilimusic.utils.LrcParser
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +60,10 @@ data class PlayerState(
     val audioBitrate: Int? = null,
     val audioCodec: String? = null,
     val audioSampleRate: Int? = null,
-    val audioChannels: Int? = null
+    val audioChannels: Int? = null,
+    val lyrics: List<LyricLine> = emptyList(),
+    val currentLyricIndex: Int = -1,
+    val isFetchingLyrics: Boolean = false
 )
 
 /**
@@ -272,7 +277,10 @@ class PlayerViewModel(
                             currentPositionMs = currentPos,
                             durationMs = duration,
                             audioBitrate = null,
-                            audioCodec = null
+                            audioCodec = null,
+                            lyrics = fetchMockLyrics(song.title),
+                            currentLyricIndex = 0,
+                            isFetchingLyrics = false
                         )
                     }
                 } else {
@@ -282,7 +290,9 @@ class PlayerViewModel(
                             currentIndex = -1,
                             progress = 0f,
                             currentPositionMs = 0L,
-                            durationMs = 0L
+                            durationMs = 0L,
+                            lyrics = emptyList(),
+                            currentLyricIndex = -1
                         )
                     }
                 }
@@ -372,11 +382,18 @@ class PlayerViewModel(
                         val pos = player.currentPosition
                         val dur = player.duration
                         if (dur > 0) {
+                            val currentState = _state.value
+                            val newLyricIndex = if (currentState.lyrics.isNotEmpty()) {
+                                val idx = currentState.lyrics.indexOfLast { lyric -> lyric.timestampMs <= pos }
+                                if (idx != -1) idx else 0
+                            } else -1
+
                             _state.update { 
                                 it.copy(
                                     progress = pos.toFloat() / dur.toFloat(),
                                     currentPositionMs = pos,
                                     durationMs = dur,
+                                    currentLyricIndex = newLyricIndex
                                 ) 
                             }
 
@@ -577,6 +594,25 @@ class PlayerViewModel(
                 }
             }
         }
+    }
+
+
+
+    private fun fetchMockLyrics(title: String): List<LyricLine> {
+        val mockLrc = """
+            [00:00.00] 歌曲：$title
+            [00:05.00] 歌手：未知
+            [00:10.00] 这是一段模拟测试歌词
+            [00:15.00] 在未来的版本中，我们将接入真实的 B站 CC 字幕
+            [00:20.00] 或者是第三方的歌词 API
+            [00:25.00] 现在的你可以体验到丝滑的滚动效果
+            [00:30.00] Music...
+            [00:35.00] 每一行都会根据时间自动高亮并滚动
+            [00:40.00] 也可以在此之上实现翻译、假名注音等高级特性
+            [00:50.00] Enjoy the music!
+            [01:00.00] -- 结束 --
+        """.trimIndent()
+        return LrcParser.parseLrc(mockLrc)
     }
 
     fun removeSong(index: Int) {

@@ -113,15 +113,60 @@ fun PlayerScreenContent(
     val coverColor = state.currentPlaylist?.coverColor
         ?: MaterialTheme.colorScheme.primaryContainer
     var showQueueSheet by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 28.dp)
-            .padding(bottom = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showLyrics,
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(500)),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(500))
+        ) {
+            if (!song?.albumArtUrl.isNullOrEmpty()) {
+                Box {
+                    AsyncImage(
+                        model = song?.albumArtUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .blur(80.dp)
+                    )
+                    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        colors = listOf(coverColor.copy(alpha = 0.8f), Color.Black)
+                    )
+                ))
+            }
+        }
+        
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 28.dp)
+                .padding(bottom = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            androidx.compose.animation.AnimatedContent(
+                targetState = showLyrics,
+                label = "main_content",
+                modifier = Modifier.weight(2.2f).fillMaxWidth()
+            ) { isLyrics ->
+                if (isLyrics) {
+                    LyricsView(
+                        lyrics = state.lyrics,
+                        currentIndex = state.currentLyricIndex,
+                        onSeekTo = { onSeek(if (state.durationMs > 0) it.toFloat() / state.durationMs.toFloat() else 0f) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
         // ── 标题行 ───────────────────────────────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -311,6 +356,9 @@ fun PlayerScreenContent(
                 )
             }
         }
+                    }
+                }
+            }
 
         Spacer(Modifier.height(20.dp))
 
@@ -422,6 +470,7 @@ fun PlayerScreenContent(
         }
 
         Spacer(Modifier.weight(1f))
+
         androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(12.dp))
 
@@ -484,14 +533,15 @@ fun PlayerScreenContent(
                 )
             }
 
-            IconButton(onClick = {}) {
+            IconButton(onClick = { showLyrics = !showLyrics }) {
                 Icon(
                     Icons.Default.Lyrics,
                     contentDescription = "歌词",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (showLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
+    }
     }
 }
 
